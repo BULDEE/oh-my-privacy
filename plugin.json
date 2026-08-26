@@ -1,0 +1,13 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.json",
+  "name": "oh-my-privacy",
+  "version": "0.2.0",
+  "description": "Secret-handling rules and guardrails for agents. Portable Agent Plugins v1 package: ships the oh-my-privacy skill. Execution hooks live in the native variants (Claude Code: .claude-plugin, Hermes: hermes/).",
+  "author": {
+    "name": "Alexandre Mallet",
+    "email": "contact@buldee.com",
+    "url": "https://buldee.com"
+  },
+  "license": "MIT",
+  "keywords": ["security", "secrets", "guardrail"]
+}

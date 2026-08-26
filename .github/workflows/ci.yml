@@ -1,0 +1,97 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: unit tests (python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install age (round-trip tests skip without it)
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then brew install age; else sudo apt-get update && sudo apt-get install -y age; fi
+      - name: Run tests
+        env:
+          OMP_HISTORY: ${{ runner.temp }}/history.jsonl
+          OMP_CLIPBOARD: "0"
+        run: python3 -m unittest discover -s tests -v
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install linters
+        run: python3 -m pip install --quiet ruff==0.6.9 mypy==1.11.2
+      - name: ruff
+        run: ruff check .
+      - name: mypy
+        run: mypy omp hermes
+      - name: shellcheck
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          shellcheck hooks/guard.sh install/install-managed.sh
+      - name: Manifests parse
+        run: |
+          python3 -c "import json; json.load(open('.claude-plugin/plugin.json')); json.load(open('plugin.json')); json.load(open('hooks/hooks.json'))"
+          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --quiet pyyaml
+          python3 -c "import yaml; yaml.safe_load(open('hermes/plugin.yaml'))"
+      - name: No em dash in sources
+        run: |
+          if grep -rl $'\xe2\x80\x94' --include='*.py' --include='*.md' --include='*.json' --include='*.sh' --include='*.yaml' --include='*.yml' .; then
+            echo "em dash found"; exit 1
+          fi
+
+  guard-probes:
+    name: PreToolUse guard probes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Allowed and denied forms behave as documented
+        run: |
+          probe() { printf '{"tool_input":{"command":%s}}' "$(python3 -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$1")" | bash hooks/guard.sh; }
+          expect_deny() { [ -n "$(probe "$1")" ] || { echo "should deny: $1"; exit 1; }; }
+          expect_allow() { [ -z "$(probe "$1")" ] || { echo "should allow: $1"; exit 1; }; }
+          expect_deny "doppler secrets get FOO --plain"
+          expect_deny "doppler secrets download --no-file"
+          expect_deny "doppler run -- env"
+          expect_deny "doppler run -- python3 -c 'import os;print(os.environ)'"
+          expect_deny "age -d -i id.age x.age"
+          expect_deny "env"
+          expect_deny "cat .env"
+          expect_allow "doppler secrets --only-names --project p --config c"
+          expect_allow "doppler secrets set FOO --project p --config c --silent"
+          expect_allow "doppler run --silent -- ./bin/console app:sync"
+          expect_allow "git status"
+          expect_allow "sed 's/=.*/=<masked>/' .env"
+
+  plugin-validate:
+    name: Claude Code plugin manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: claude plugin validate
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude plugin validate . --strict

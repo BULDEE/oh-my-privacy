@@ -1,0 +1,40 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "/opt/homebrew/bin/python3 \"/usr/local/lib/oh-my-privacy/omp/hook.py\"", "timeout": 30 }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "/bin/bash \"/usr/local/lib/oh-my-privacy/hooks/guard.sh\"", "timeout": 10 },
+          { "type": "command", "command": "/opt/homebrew/bin/python3 \"/usr/local/lib/oh-my-privacy/omp/pre_bash.py\"", "timeout": 15 }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          { "type": "command", "command": "/opt/homebrew/bin/python3 \"/usr/local/lib/oh-my-privacy/omp/pre_read.py\"", "timeout": 15 }
+        ]
+      },
+      {
+        "matcher": "Grep",
+        "hooks": [
+          { "type": "command", "command": "/opt/homebrew/bin/python3 \"/usr/local/lib/oh-my-privacy/omp/pre_grep.py\"", "timeout": 30 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "/opt/homebrew/bin/python3 \"/usr/local/lib/oh-my-privacy/omp/post_scrub.py\"", "timeout": 30 }
+        ]
+      }
+    ]
+  },
+  "disableAllHooks": false
+}

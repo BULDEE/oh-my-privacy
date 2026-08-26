@@ -1,0 +1,15 @@
+# ~/.hermes/config.yaml (excerpt)
+plugins:
+  entries:
+    oh-my-privacy:
+      enabled: true
+      settings:
+        # discard | age | doppler
+        vault: age
+        age_recipient: age1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqs3290gq
+        age_store_dir: ""           # empty = ~/.claude/omp
+        # vault: doppler
+        # doppler_project: acme
+        # doppler_config: dev
+        # Empty = scan every tool call. Narrow it when a tool legitimately carries opaque blobs.
+        scan_tools: ""

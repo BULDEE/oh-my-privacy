@@ -1,0 +1,15 @@
+{
+  "name": "oh-my-privacy",
+  "displayName": "OhMyPrivacy",
+  "version": "0.2.0",
+  "description": "Blocks any prompt that contains a secret before it reaches the model, refuses commands that read a vault back, and stores the values in the vault of your choice (age, Doppler, or none).",
+  "author": {
+    "name": "Alexandre Mallet",
+    "email": "contact@buldee.com",
+    "url": "https://buldee.com"
+  },
+  "license": "MIT",
+  "keywords": ["security", "secrets", "guardrail", "hooks"],
+  "hooks": "./hooks/hooks.json",
+  "skills": "./skills/"
+}

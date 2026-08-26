@@ -1,0 +1,20 @@
+name: oh-my-privacy
+version: 0.2.0
+manifest_version: 2
+api_version: 1
+description: "Prevents the agent from executing, writing or sending a secret in clear. Intercepted values go to the configured vault (discard, age, doppler) and the agent only receives their name."
+author: Alexandre Mallet
+contact: contact@buldee.com
+homepage: https://buldee.com
+license: MIT
+tags: [security, secrets, guardrail]
+provides_hooks:
+  - pre_tool_call
+  - pre_llm_call
+config_schema:
+  vault: {type: str, default: "discard", description: "discard | age | doppler"}
+  doppler_project: {type: str, default: "", description: "Doppler project (vault=doppler)"}
+  doppler_config: {type: str, default: "", description: "Doppler config (vault=doppler)"}
+  age_recipient: {type: str, default: "", description: "age1... public key (vault=age)"}
+  age_store_dir: {type: str, default: "", description: "age store directory (default: ~/.claude/omp)"}
+  scan_tools: {type: str, default: "", description: "Comma-separated list of tools to scan. Empty = every tool."}

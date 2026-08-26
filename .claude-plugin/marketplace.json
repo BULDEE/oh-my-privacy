@@ -1,0 +1,16 @@
+{
+  "name": "oh-my-privacy-local",
+  "description": "Local marketplace for the OhMyPrivacy secret guardrail plugin.",
+  "owner": {
+    "name": "Alexandre Mallet",
+    "email": "contact@buldee.com",
+    "url": "https://buldee.com"
+  },
+  "plugins": [
+    {
+      "name": "oh-my-privacy",
+      "source": "./",
+      "description": "Blocks any prompt that contains a secret before it reaches the model, refuses commands that read a vault back, and stores the values in the vault of your choice (age, Doppler, or none)."
+    }
+  ]
+}

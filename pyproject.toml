@@ -1,0 +1,31 @@
+[project]
+name = "oh-my-privacy"
+version = "0.2.0"
+description = "Secret guardrail for AI agents: blocks prompts and tool calls that carry a secret, stores the value in a write-only vault."
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Alexandre Mallet" }]
+dependencies = []
+
+[tool.ruff]
+line-length = 160
+target-version = "py311"
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "N"]
+ignore = [
+  "S101",  # assert in tests and narrowing
+  "S603",  # subprocess without shell, arguments are lists
+  "S607",  # CLI names resolved on PATH on purpose (doppler, age, pbcopy)
+  "E402",  # sys.path bootstrap before imports in entry points
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106", "S108"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+files = ["omp", "hermes"]

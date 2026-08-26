@@ -1,0 +1,9 @@
+{
+  "vault": "doppler",
+  "clipboard": true,
+  "prompt_file": "~/.claude/omp-last-prompt.txt",
+  "doppler": {
+    "project": "acme",
+    "config": "dev"
+  }
+}
