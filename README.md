@@ -19,6 +19,29 @@ Python 3.11+.
 In both cases the value goes to the vault of your choice, and the agent only receives its
 name: `$OMP_JWT_B5352DF5`.
 
+## See it block
+
+A staging key pasted into a Claude Code prompt. The message never reaches the model:
+
+```console
+$ echo '{"prompt":"here is our staging key sk-ant-api03-...FAKE... can you use it to call the API"}' \
+  | python3 omp/hook.py
+
+OhMyPrivacy intercepted 1 secret(s). The message is BLOCKED: it never reached the model.
+Vault: discard.
+  $OMP_ANTHROPIC_08A3C1A6 (anthropic): discarded (no vault configured). the value no
+  longer exists; set it again outside this session, or configure a vault: python3 -m omp.setup
+
+Your cleaned message is available via ~/.claude/omp-last-prompt.txt. Paste it as is to continue:
+
+--- cleaned message ---
+here is our staging key $OMP_ANTHROPIC_08A3C1A6 can you use it to call the API
+```
+
+Not a mockup: real output of `omp/hook.py` on a `UserPromptSubmit` event, default vault
+(`discard`, level 3). Level 2 (`age`) and level 1 (`doppler`) name where the value actually
+went instead of `discarded`; see [The three levels](#the-three-levels).
+
 ## Origin
 
 Not a response to one bad paste. More people are vibe-coding with AI agents than ever
