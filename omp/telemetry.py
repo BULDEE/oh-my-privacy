@@ -56,7 +56,7 @@ def _as_int(value: object) -> int:
     cannot recover from once the bad value is already back in the bucket. Clamping keeps every
     stored count inside a range arithmetic on it can never overflow.
     """
-    if not isinstance(value, (int, float)):
+    if not isinstance(value, int | float):
         return 0
     try:
         result = int(value)
@@ -67,7 +67,7 @@ def _as_int(value: object) -> int:
 
 def _as_float(value: object) -> float:
     """A store file can be written by anything on this machine: never trust a field's type or range."""
-    if not isinstance(value, (int, float)):
+    if not isinstance(value, int | float):
         return 0.0
     try:
         result = float(value)
