@@ -19,6 +19,7 @@ import math
 import os
 import re
 import secrets
+import stat
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -57,9 +58,13 @@ def _as_int(value: object) -> int:
 
 
 def _as_float(value: object) -> float:
+    """A store file can be written by anything on this machine: never trust a field's type or range."""
     if not isinstance(value, (int, float)):
         return 0.0
-    result = float(value)
+    try:
+        result = float(value)
+    except OverflowError:
+        return 0.0
     return result if math.isfinite(result) else 0.0
 
 
@@ -68,12 +73,42 @@ def stats_path() -> Path:
     return Path(override).expanduser() if override else DEFAULT_STATS_PATH
 
 
+def _open_nonblocking(path: Path, flags: int, mode: int = 0) -> int | None:
+    """Open without ever blocking on a FIFO or device, and refuse anything but a regular file.
+
+    A store path a hostile local process pre-plants as a named pipe (`mkfifo`) would otherwise
+    block `open()` indefinitely until a reader/writer connects on the other end - turning a
+    best-effort instrument into a hang on the caller's decision path. `O_NONBLOCK` makes that
+    fail fast with `OSError` instead; `O_NOFOLLOW` (POSIX only) additionally refuses a symlink.
+    """
+    try:
+        combined = flags | os.O_NONBLOCK
+        if hasattr(os, "O_NOFOLLOW"):
+            combined |= os.O_NOFOLLOW
+        descriptor = os.open(str(path), combined, mode) if mode else os.open(str(path), combined)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            os.close(descriptor)
+            return None
+    except OSError:
+        os.close(descriptor)
+        return None
+    return descriptor
+
+
 def load(path: Path | None = None) -> dict[str, object]:
     target = path or stats_path()
-    try:
-        raw = json.loads(target.read_text()) if target.stat().st_size <= MAX_STATS_BYTES else None
-    except Exception:
-        raw = None
+    raw: object = None
+    descriptor = _open_nonblocking(target, os.O_RDONLY)
+    if descriptor is not None:
+        try:
+            with os.fdopen(descriptor, "r") as handle:
+                if os.fstat(handle.fileno()).st_size <= MAX_STATS_BYTES:
+                    raw = json.loads(handle.read())
+        except Exception:
+            raw = None
     if not isinstance(raw, dict):
         raw = {}
     raw.setdefault("version", 1)
@@ -83,10 +118,13 @@ def load(path: Path | None = None) -> dict[str, object]:
 
 
 def _save(path: Path, store: dict[str, object]) -> None:
-    """Write through a fresh temp inode, then rename: never follow a symlink, never leave a half-written store."""
+    """Write through a fresh temp inode, then rename: never follow a symlink, never block on a FIFO,
+    never leave a half-written store, never collide with a concurrent writer's temp file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    descriptor = os.open(str(temporary), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+    descriptor = _open_nonblocking(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    if descriptor is None:
+        return
     try:
         with os.fdopen(descriptor, "w") as handle:
             # `os.open`'s mode argument is ignored when the temp file already exists: force it shut either way.
@@ -224,12 +262,12 @@ def format_report(store: dict[str, object]) -> str:
             count = int(bucket.get("count", 0))
             total_latency = float(bucket.get("latency_ms_total", 0.0))
             false_positives = int(bucket.get("false_positive_count", 0))
+            if not math.isfinite(total_latency):
+                continue
+            average = total_latency / count if count else 0.0
+            rate = (false_positives / count * 100) if count else 0.0
         except (ValueError, OverflowError, TypeError):
             continue
-        if not math.isfinite(total_latency):
-            continue
-        average = total_latency / count if count else 0.0
-        rate = (false_positives / count * 100) if count else 0.0
         # Sanitized on read too: the store is a plain file any local process can rewrite, and this line goes to a terminal.
         lines.append(f"{_sanitize_label(str(key)):<45} {count:>6} {average:>7.1f}ms {rate:>14.1f}%")
     return "\n".join(lines)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -138,6 +139,26 @@ class Recording(unittest.TestCase):
         assert isinstance(counters, dict)
         self.assertEqual(counters["claude_code.prompt.anthropic.block"]["count"], 1)
 
+    def test_a_huge_integer_latency_in_the_store_never_raises_and_the_bucket_still_heals(self) -> None:
+        """A 400-digit integer is valid JSON `int()` accepts without raising, but `float()` on it does
+        (`OverflowError`, converting to a C double) - the same failure mode as `1e400`, different literal
+        form. Unlike the `1e400` case, this one used to escape `_bump` and abort `record()` before
+        `_save()`, leaving the bucket permanently un-healed even though `record()` itself never raised."""
+        huge = "9" * 400
+        poisoned = (
+            '{"version":1,"counters":{"claude_code.prompt.anthropic.block":'
+            f'{{"count":1,"latency_ms_total":{huge},"false_positive_count":0}}}},"recent_events":[]}}'
+        )
+        self.stats_path.write_text(poisoned)
+        event_id = telemetry.record("claude_code", "prompt", ["anthropic"], "block", 1.0, path=self.stats_path)
+        self.assertIsNotNone(event_id)
+        store = telemetry.load(self.stats_path)
+        counters = store["counters"]
+        assert isinstance(counters, dict)
+        bucket = counters["claude_code.prompt.anthropic.block"]
+        self.assertEqual(bucket["count"], 2)
+        self.assertEqual(bucket["latency_ms_total"], 1.0)
+
     def test_a_supplied_event_id_is_used_verbatim(self) -> None:
         event_id = telemetry.record("claude_code", "prompt", ["anthropic"], "block", 1.0, path=self.stats_path, event_id="cafebabe")
         self.assertEqual(event_id, "cafebabe")
@@ -213,11 +234,35 @@ class SaveHardening(unittest.TestCase):
         self.assertEqual(self.stats_path.stat().st_mode & 0o777, 0o600)
 
     def test_the_write_is_a_rename_so_the_store_is_valid_json_at_rest(self) -> None:
-        """The swap is atomic: a reader never sees a partial store, and the temp file never survives the call."""
+        """The swap is atomic: a reader never sees a partial store, and no temp file survives the call.
+
+        The temp filename embeds the writer's pid and a random suffix (so concurrent writers never
+        collide on the same path), so this checks for any leftover `*.tmp` sibling, not one fixed name.
+        """
         for _ in range(3):
             telemetry.record("claude_code", "prompt", ["anthropic"], "block", 1.0, path=self.stats_path)
             json.loads(self.stats_path.read_text())
-        self.assertFalse(self.stats_path.with_name("stats.json.tmp").exists())
+        self.assertEqual(list(Path(self.workdir.name).glob("*.tmp")), [])
+
+    def test_a_fifo_at_the_store_path_is_healed_instead_of_hanging(self) -> None:
+        """A hostile local process can `mkfifo` the store path. `load()` refuses to open it for read
+        (never blocks), and `_save()`'s unpredictable, per-call temp filename means the write side
+        never touches the FIFO either - it writes a fresh regular file elsewhere and `rename()`s over
+        the FIFO, which POSIX allows unconditionally regardless of the target's type. Net effect:
+        the call still succeeds and the FIFO is gone, replaced by a real store - never a hang."""
+        os.mkfifo(self.stats_path)
+        event_id = telemetry.record("claude_code", "prompt", ["anthropic"], "block", 1.0, path=self.stats_path)
+        self.assertIsNotNone(event_id)
+        self.assertFalse(stat.S_ISFIFO(self.stats_path.lstat().st_mode))
+        self.assertIn("anthropic", self.stats_path.read_text())
+
+    def test_a_fifo_at_the_store_path_makes_load_return_the_empty_store_instead_of_hanging(self) -> None:
+        os.mkfifo(self.stats_path)
+        try:
+            store = telemetry.load(self.stats_path)
+        finally:
+            self.stats_path.unlink()
+        self.assertEqual(store["counters"], {})
 
 
 class Disabled(unittest.TestCase):
@@ -261,8 +306,14 @@ class FalsePositive(unittest.TestCase):
     def setUp(self) -> None:
         self.workdir = tempfile.TemporaryDirectory()
         self.stats_path = Path(self.workdir.name) / "stats.json"
+        self.previous_config = os.environ.get("OMP_CONFIG")
+        os.environ["OMP_CONFIG"] = str(Path(self.workdir.name) / "omp.json")
 
     def tearDown(self) -> None:
+        if self.previous_config is None:
+            del os.environ["OMP_CONFIG"]
+        else:
+            os.environ["OMP_CONFIG"] = self.previous_config
         self.workdir.cleanup()
 
     def test_marking_a_known_event_updates_the_bucket_and_the_event(self) -> None:
@@ -324,6 +375,18 @@ class Report(unittest.TestCase):
         self.assertNotIn("nan", report)
         self.assertNotIn("textual", report)
 
+    def test_a_huge_integer_count_does_not_crash_the_average_calculation(self) -> None:
+        """`count` survives `int()` unraised (ints have no size limit), but `total_latency / count` then
+        converts `count` to a C double for the division, which raises `OverflowError` past ~1.8e308 -
+        arithmetic that used to sit outside the try/except guarding the type coercions above it."""
+        store: dict[str, object] = {
+            "version": 1,
+            "counters": {"claude_code.prompt.anthropic.block": {"count": int("9" * 400), "latency_ms_total": 1.0, "false_positive_count": 0}},
+            "recent_events": [],
+        }
+        report = telemetry.format_report(store)
+        self.assertNotIn("anthropic", report)
+
     def test_a_hostile_bucket_key_is_sanitized_before_it_reaches_the_terminal(self) -> None:
         store: dict[str, object] = {
             "version": 1,
@@ -337,6 +400,18 @@ class Report(unittest.TestCase):
 
 
 class Cli(unittest.TestCase):
+    def setUp(self) -> None:
+        self.workdir = tempfile.TemporaryDirectory()
+        self.previous_config = os.environ.get("OMP_CONFIG")
+        os.environ["OMP_CONFIG"] = str(Path(self.workdir.name) / "omp.json")
+
+    def tearDown(self) -> None:
+        if self.previous_config is None:
+            del os.environ["OMP_CONFIG"]
+        else:
+            os.environ["OMP_CONFIG"] = self.previous_config
+        self.workdir.cleanup()
+
     def test_report_flag_runs_clean_on_missing_store(self) -> None:
         with tempfile.TemporaryDirectory() as workdir:
             stats_path = Path(workdir) / "stats.json"
