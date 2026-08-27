@@ -1,6 +1,6 @@
 [project]
 name = "oh-my-privacy"
-version = "0.2.0"
+version = "0.3.0"
 description = "Secret guardrail for AI agents: blocks prompts and tool calls that carry a secret, stores the value in a write-only vault."
 requires-python = ">=3.11"
 license = { text = "MIT" }

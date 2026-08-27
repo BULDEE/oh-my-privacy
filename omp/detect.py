@@ -7,7 +7,8 @@ its placeholder before the next stage runs, so nothing is counted twice.
 2. Assignment context (`api_key = ...`, `password: ...`): the name betrays the value.
 3. Entropy: a long, mixed, dense string is a token, never prose. Pure hexadecimal (git SHA,
    docker digest, UUID) cannot reach the threshold, so it passes: a commit SHA in a prompt
-   is a legitimate and frequent use.
+   is a legitimate and frequent use. This stage never reads inside a URL: what a link carries
+   belongs to whoever handed the link out, the threat model here is what the user leaks himself.
 """
 
 from __future__ import annotations
@@ -71,9 +72,24 @@ INLINE_CREDENTIAL_PATTERNS: tuple[str, ...] = (
     r"[a-z][a-z0-9+.\-]*://[^:/\s@]+:(?P<value>[^@\s]{4,})@",
 )
 
+# What a URL carries belongs to whoever handed the URL out, never to the user who pastes it. The
+# entropy stage therefore never reads inside a URL: only a positively identified secret does,
+# through the prefix and userinfo stages, which run earlier.
+URL_PATTERN = re.compile(
+    r"""(?ix)
+    \b[a-z][a-z0-9+.\-]*://[^\s"'<>`]+
+    | \bwww\.[^\s"'<>`]+
+    | \b[a-z0-9\-]+(?:\.[a-z0-9\-]+)+/[^\s"'<>`]+
+    """
+)
 GENERIC_TOKEN = re.compile(r"[A-Za-z0-9_\-+/=]{32,}")
 LONG_HEX = re.compile(r"\b[0-9a-fA-F]{48,}\b")
 DIGEST_PREFIX = re.compile(r"(?i)(?:sha\d*[:\-]|integrity\s+|md5[:\-])$")
+# A path, a slug, a composite id: several short segments glued by separators. An opaque token
+# keeps its randomness inside one block; splitting a URL path never yields a long random segment.
+STRUCTURED_SEPARATORS = re.compile(r"[-_./]")
+STRUCTURED_MIN_SEGMENTS = 3
+STRUCTURED_MAX_SEGMENT = 20
 ENTROPY_THRESHOLD = 4.5
 PLACEHOLDER_PREFIX = "$OMP_"
 
@@ -101,9 +117,23 @@ def shannon_entropy(text: str) -> float:
     return -sum((count / length) * math.log2(count / length) for count in counts.values())
 
 
+def is_structured_identifier(candidate: str) -> bool:
+    """`org/repo/actions/runs/1895`, `run-2026-08-27-build`: structure, not entropy.
+
+    The mix of case and digits comes from the assembled segments, never from one of them. A real
+    token concentrates its randomness in a single block, so at least one segment stays long.
+    """
+    segments = [segment for segment in STRUCTURED_SEPARATORS.split(candidate) if segment]
+    if len(segments) < STRUCTURED_MIN_SEGMENTS:
+        return False
+    return all(len(segment) < STRUCTURED_MAX_SEGMENT for segment in segments)
+
+
 def looks_like_token(candidate: str) -> bool:
     # Placeholders, paths and command-line option clusters (`-abcdefgh...`) are never tokens.
     if candidate.startswith(("OMP_", "/", "-")):
+        return False
+    if is_structured_identifier(candidate):
         return False
     has_lower = any(char.islower() for char in candidate)
     has_upper = any(char.isupper() for char in candidate)
@@ -152,6 +182,17 @@ def _apply_entropy(cleaned: str, findings: dict[str, Finding]) -> str:
     return cleaned
 
 
+def _apply_entropy_outside_urls(cleaned: str, findings: dict[str, Finding]) -> str:
+    parts: list[str] = []
+    cursor = 0
+    for match in URL_PATTERN.finditer(cleaned):
+        parts.append(_apply_entropy(cleaned[cursor:match.start()], findings))
+        parts.append(match.group(0))
+        cursor = match.end()
+    parts.append(_apply_entropy(cleaned[cursor:], findings))
+    return "".join(parts)
+
+
 def detect(text: str) -> tuple[str, list[Finding]]:
     """Return the cleaned text and the secrets found, in discovery order."""
     findings: dict[str, Finding] = {}
@@ -161,5 +202,5 @@ def detect(text: str) -> tuple[str, list[Finding]]:
     cleaned = _apply_context(cleaned, findings, PASSWORD_PATTERN, "password")
     for pattern in INLINE_CREDENTIAL_PATTERNS:
         cleaned = _apply_context(cleaned, findings, re.compile(pattern), "password")
-    cleaned = _apply_entropy(cleaned, findings)
+    cleaned = _apply_entropy_outside_urls(cleaned, findings)
     return cleaned, list(findings.values())

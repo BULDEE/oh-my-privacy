@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from omp.detect import detect, looks_like_token, placeholder_name  # noqa: E402
+from omp.detect import detect, is_structured_identifier, looks_like_token, placeholder_name  # noqa: E402
 
 FAKE_JWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0IiwiaXNzIjoibjhuIn0.FAKEsignature_abcdefghijklmnopqrst"
 FAKE_ANTHROPIC = "sk-ant-api03-FAKEKEYFORTESTINGONLY0000000000"
@@ -84,9 +84,52 @@ class EntropyPatterns(unittest.TestCase):
         _, findings = detect("file /Users/dev/.claude/projects/-Users-dev-Dev-acme-stack-infra-scripts/cad86bcf.jsonl")
         self.assertEqual(findings, [])
 
+    def test_github_actions_url_passes(self) -> None:
+        _, findings = detect("regarde https://github.com/BULDEE/ai-craftsman-superpowers/actions/runs/18952661234/job/54123456789?pr=29")
+        self.assertEqual(findings, [])
+
+    def test_deep_url_path_passes(self) -> None:
+        for text in (
+            "https://console.cloud.google.com/logs/query/projectXY/runs/2026-08-27T10/entries/AbCd12",
+            "https://app.example.io/orgs/Acme42/workspaces/Prod9/pipelines/Build77/runs/1234567",
+        ):
+            _, findings = detect(text)
+            self.assertEqual(findings, [], text)
+
+    def test_composite_identifier_passes(self) -> None:
+        for text in (
+            "job run-2026-08-27-BULDEE-build-4210 failed",
+            "bucket s3://acme-prod-eu-west-1/exports/Report2026/final-V2.csv",
+        ):
+            _, findings = detect(text)
+            self.assertEqual(findings, [], text)
+
+    def test_opaque_token_inside_a_url_passes(self) -> None:
+        """What a URL carries is the responsibility of whoever handed it out, not of the user pasting it."""
+        for text in (
+            f"https://example.test/download/{FAKE_OPAQUE}",
+            f"www.example.test/d/{FAKE_OPAQUE}",
+            f"example.test/d/{FAKE_OPAQUE}",
+        ):
+            _, findings = detect(text)
+            self.assertEqual(findings, [], text)
+
+    def test_entropy_outside_the_url_is_still_detected(self) -> None:
+        _, findings = detect(f"https://example.test/docs then paste {FAKE_OPAQUE}")
+        self.assertEqual([finding.kind for finding in findings], ["token"])
+
+    def test_known_prefix_inside_a_url_is_still_detected(self) -> None:
+        cleaned, findings = detect(f"curl 'https://api.test/x?key={FAKE_ANTHROPIC}'")
+        self.assertEqual([finding.kind for finding in findings], ["anthropic"])
+        self.assertNotIn(FAKE_ANTHROPIC, cleaned)
+
     def test_prose_passes(self) -> None:
         _, findings = detect("explain the repository pattern and show a PHP example with sk-ant short")
         self.assertEqual(findings, [])
+
+    def test_structured_identifier_is_not_a_token(self) -> None:
+        self.assertTrue(is_structured_identifier("com/BULDEE/ai-craftsman-superpowers/actions/runs/18952661234"))
+        self.assertFalse(is_structured_identifier(FAKE_OPAQUE))
 
     def test_looks_like_token_requires_mixed_classes(self) -> None:
         self.assertFalse(looks_like_token("a" * 40))
