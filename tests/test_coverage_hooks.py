@@ -145,6 +145,15 @@ class GrepContent(Workspace):
     def test_files_with_matches_mode_is_untouched(self) -> None:
         self.assertIsNone(run_hook("pre_grep.py", {"tool_name": "Grep", "tool_input": {"pattern": "KEY", "path": str(self.work)}}))
 
+    def test_masking_records_telemetry(self) -> None:
+        stats_path = self.work / "stats.json"
+        payload = {"tool_name": "Grep", "tool_input": {"pattern": "KEY", "path": str(self.work), "output_mode": "content"}}
+        run_hook("pre_grep.py", payload, {"CLAUDE_CODE_EXECPATH": str(CLAUDE), "OMP_STATS": str(stats_path)})
+        stats = stats_path.read_text()
+        self.assertIn('"host": "claude_code"', stats)
+        self.assertIn('"tool": "Grep"', stats)
+        self.assertIn('"action": "mask"', stats)
+
 
 class PostToolScrub(Workspace):
     def test_leaked_response_scrubs_transcript_and_snapshots_and_warns(self) -> None:
