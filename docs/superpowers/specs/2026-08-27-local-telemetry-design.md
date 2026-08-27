@@ -45,8 +45,17 @@ omp/telemetry.py   record(), mark_false_positive(), report(), __main__ CLI
 
 Hosts stay composition roots (architecture.md's existing rule): each one times its own
 call to `detect()`/`intercept()` and calls `telemetry.record(...)` right before returning
-its decision. Touched hosts: `omp/hook.py`, `hermes/__init__.py`, `omp/pre_bash.py`,
-`omp/pre_grep.py`, `omp/pre_read.py`, `omp/post_scrub.py`.
+its decision. Touched hosts: `omp/hook.py`, `hermes/__init__.py`, `omp/mask.py` (the actual
+`detect()` call site for Bash output, spawned by `omp/pre_bash.py`'s wrapper - not
+`pre_bash.py` itself, which never calls `detect()`), `omp/pre_grep.py`, `omp/pre_read.py`,
+`omp/post_scrub.py`.
+
+`action` values: `block` (`hook.py`, `hermes` `pre_tool_call`), `mask` (`omp/mask.py`,
+`pre_grep.py`, `pre_read.py` - the model still receives content, masked), `scrub`
+(`post_scrub.py`), and `context` (`hermes` `pre_llm_call` - Hermes can neither block nor
+rewrite the user message, ADR already documents this host limit; the secret still reaches
+the model for that turn, so this is friction of a different kind than a block and must be
+countable separately).
 
 ## Storage
 
@@ -109,7 +118,7 @@ Each host wraps its existing `detect()`/`intercept()` call with a timer and call
 formatting its own answer. `hook.py`'s block message gains one line:
 
 ```
-Faux positif ? python3 -m omp.telemetry --false-positive <id>
+False positive? python3 -m omp.telemetry --false-positive <id>
 ```
 
 `record()` returns `None` when telemetry is disabled or the write fails; hosts omit the
