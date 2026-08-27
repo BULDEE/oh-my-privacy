@@ -130,10 +130,10 @@ def main() -> int:
         return 0
     scrubbed = scrub_traces(payload, len(leaked_kinds) + len(typed_kinds))
     all_kinds = leaked_kinds + typed_kinds
-    if all_kinds:
-        telemetry.record("claude_code", tool_name or "unknown", all_kinds, "scrub", latency_ms)
     if leaked_kinds:
         print(json.dumps(warning(tool_name, len(leaked_kinds), scrubbed)))
+    if all_kinds:
+        telemetry.record("claude_code", tool_name or "unknown", all_kinds, "scrub", latency_ms)
     return 0
 
 

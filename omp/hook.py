@@ -109,8 +109,10 @@ def main() -> int:
     if not prompt:
         return 0
     config = config_module.load()
+    cleaned_prompt = expand_pastes(prompt)
+    adapter = build(config)
     started = time.perf_counter()
-    interception = intercept(expand_pastes(prompt), build(config))
+    interception = intercept(cleaned_prompt, adapter)
     latency_ms = (time.perf_counter() - started) * 1000
     del prompt
     if interception is None:
@@ -120,6 +122,9 @@ def main() -> int:
     history.spawn_background(since_ms)
     paste_cache.scrub_recent()
     kinds = [outcome.kind for outcome in interception.outcomes]
+    # Must happen before the response is built: the hint line below needs event_id. A slow/hung telemetry
+    # write can therefore delay this response past the host's hook timeout - accepted, matches record()'s
+    # own "never raises, may block" contract.
     event_id = telemetry.record("claude_code", "prompt", kinds, "block", latency_ms)
     print(json.dumps(block_response(interception, hand_back(config, interception.cleaned, interception.vault), event_id)))
     return 0

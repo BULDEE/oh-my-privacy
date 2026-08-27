@@ -66,6 +66,7 @@ def requested_file(payload: object) -> tuple[dict[str, object], Path] | None:
 
 
 def main() -> int:
+    # craftsman-ignore: PY002 (I/O-only hook entry point, kept as one unit matching this project's other hook mains)
     try:
         payload = json.load(sys.stdin)
     except (OSError, ValueError):
@@ -79,7 +80,6 @@ def main() -> int:
     latency_ms = (time.perf_counter() - started) * 1000
     if target is None:
         return 0
-    telemetry.record("claude_code", "Read", kinds, "mask", latency_ms)
     updated = dict(tool_input)
     updated["file_path"] = str(target)
     print(json.dumps({
@@ -93,6 +93,7 @@ def main() -> int:
             ),
         },
     }))
+    telemetry.record("claude_code", "Read", kinds, "mask", latency_ms)
     return 0
 
 

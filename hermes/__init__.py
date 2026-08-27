@@ -73,6 +73,9 @@ def on_pre_tool_call(tool_name: str, args: dict[str, Any], task_id: str, **kwarg
     if interception is None:
         return None
     kinds = [outcome.kind for outcome in interception.outcomes]
+    # Must happen before the response is built: the hint line below needs event_id. A slow/hung telemetry
+    # write can therefore delay this response past the host's hook timeout - accepted, matches record()'s
+    # own "never raises, may block" contract.
     event_id = telemetry.record("hermes", tool_name, kinds, "block", latency_ms)
     message = (
         f"OhMyPrivacy: call to `{tool_name}` refused, {len(interception.outcomes)} secret(s) in clear in the arguments. "

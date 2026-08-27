@@ -84,10 +84,10 @@ def main() -> int:
     tool_input = payload.get("tool_input") if isinstance(payload, dict) else None
     if not isinstance(tool_input, dict) or tool_input.get("output_mode", "files_with_matches") != "content":
         return 0
-    started = time.perf_counter()
     output = run_search(tool_input)
     if not output:
         return 0
+    started = time.perf_counter()
     cleaned, findings = detect(output)
     latency_ms = (time.perf_counter() - started) * 1000
     if not findings:
@@ -95,8 +95,8 @@ def main() -> int:
     head_limit = tool_input.get("head_limit")
     if isinstance(head_limit, int) and head_limit > 0:
         cleaned = "\n".join(cleaned.splitlines()[:head_limit])
-    telemetry.record("claude_code", "Grep", [finding.kind for finding in findings], "mask", latency_ms)
     print(json.dumps(deny_with(cleaned, len(findings))))
+    telemetry.record("claude_code", "Grep", [finding.kind for finding in findings], "mask", latency_ms)
     return 0
 
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
 import sys
 from datetime import UTC, datetime
@@ -23,6 +24,18 @@ from omp import config as config_module  # noqa: E402
 DEFAULT_STATS_PATH = Path.home() / ".claude" / "omp-stats.json"
 RING_BUFFER_SIZE = 50
 VALID_ACTIONS: frozenset[str] = frozenset({"block", "mask", "scrub", "context"})
+MAX_LABEL_LENGTH = 64
+_UNSAFE_LABEL_CHARS = re.compile(r"[^A-Za-z0-9_.-]")
+
+
+def _sanitize_label(value: str) -> str:
+    """Strip `host`/`tool` to a safe character set before they reach the bucket key or the ring buffer.
+
+    Both values can originate from a tool name a host passes through largely unchecked
+    (`payload.get("tool_name", "")` in `post_scrub.py`); this keeps them from injecting
+    control characters or shell metacharacters into the store, and therefore into --report's output.
+    """
+    return _UNSAFE_LABEL_CHARS.sub("_", value)[:MAX_LABEL_LENGTH]
 
 
 def stats_path() -> Path:
@@ -69,6 +82,8 @@ def record(host: str, tool: str, kinds: list[str], action: str, latency_ms: floa
     """Best-effort: never raises. Returns None when telemetry is off, the input is invalid, or the write fails."""
     if action not in VALID_ACTIONS or not kinds:
         return None
+    host = _sanitize_label(host)
+    tool = _sanitize_label(tool)
     try:
         config = config_module.load()
         if not config.telemetry:
@@ -138,7 +153,10 @@ def format_report(store: dict[str, object]) -> str:
     counters = store.get("counters")
     if not isinstance(counters, dict) or not counters:
         return "No telemetry recorded yet."
-    lines = [f"{'bucket':<45} {'count':>6} {'avg_ms':>8} {'false_positive':>15}"]
+    lines = [
+        "Counts are per finding, not per interception (one call can touch several kinds).",
+        f"{'bucket':<45} {'count':>6} {'avg_ms':>8} {'false_positive':>15}",
+    ]
     for key in sorted(counters):
         bucket = counters[key]
         if not isinstance(bucket, dict):

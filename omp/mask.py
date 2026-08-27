@@ -38,8 +38,9 @@ def mask_file(path: Path) -> tuple[str, list[str]]:
 
 def main() -> int:
     if len(sys.argv) == 1:
+        text = sys.stdin.read()
         started = time.perf_counter()
-        cleaned, kinds = mask(sys.stdin.read())
+        cleaned, kinds = mask(text)
         latency_ms = (time.perf_counter() - started) * 1000
         sys.stdout.write(cleaned)
         if kinds:
@@ -47,16 +48,18 @@ def main() -> int:
         return 0
     started = time.perf_counter()
     out_text, out_kinds = mask_file(Path(sys.argv[1]))
-    sys.stdout.write(out_text)
+    err_text: str = ""
     err_kinds: list[str] = []
     if len(sys.argv) > 2:
         err_text, err_kinds = mask_file(Path(sys.argv[2]))
-        sys.stderr.write(err_text)
     latency_ms = (time.perf_counter() - started) * 1000
+    sys.stdout.write(out_text)
+    if len(sys.argv) > 2:
+        sys.stderr.write(err_text)
     kinds = out_kinds + err_kinds
     if kinds:
-        telemetry.record("claude_code", "Bash", kinds, "mask", latency_ms)
         sys.stderr.write(f"[OhMyPrivacy: {len(kinds)} secret(s) masked in this output; refer to them by their $OMP_* name]\n")
+        telemetry.record("claude_code", "Bash", kinds, "mask", latency_ms)
     return 0
 
 

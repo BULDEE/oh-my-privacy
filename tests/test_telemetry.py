@@ -74,6 +74,17 @@ class Recording(unittest.TestCase):
         raw = self.stats_path.read_text()
         self.assertNotIn("sk-ant", raw)
 
+    def test_unsafe_tool_characters_are_sanitized_in_the_bucket_key(self) -> None:
+        telemetry.record("claude_code", "evil\ntool; rm -rf $(whoami)", ["anthropic"], "block", 1.0, path=self.stats_path)
+        store = telemetry.load(self.stats_path)
+        counters = store["counters"]
+        assert isinstance(counters, dict)
+        self.assertIn("claude_code.evil_tool__rm_-rf___whoami_.anthropic.block", counters)
+        for key in counters:
+            self.assertNotIn("\n", key)
+            self.assertNotIn(";", key)
+            self.assertNotIn("$", key)
+
 
 class Disabled(unittest.TestCase):
     def setUp(self) -> None:
