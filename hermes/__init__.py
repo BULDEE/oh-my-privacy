@@ -20,6 +20,7 @@ what the agent is about to do.
 from __future__ import annotations
 
 import json
+import secrets
 import sys
 import time
 from pathlib import Path
@@ -73,19 +74,17 @@ def on_pre_tool_call(tool_name: str, args: dict[str, Any], task_id: str, **kwarg
     if interception is None:
         return None
     kinds = [outcome.kind for outcome in interception.outcomes]
-    # Must happen before the response is built: the hint line below needs event_id. A slow/hung telemetry
-    # write can therefore delay this response past the host's hook timeout - accepted, matches record()'s
-    # own "never raises, may block" contract.
-    event_id = telemetry.record("hermes", tool_name, kinds, "block", latency_ms)
+    event_id = secrets.token_hex(4)
     message = (
         f"OhMyPrivacy: call to `{tool_name}` refused, {len(interception.outcomes)} secret(s) in clear in the arguments. "
         f"Vault: {interception.vault}.\n{_describe(interception)}\n"
         "Never copy a secret value into a command, a file or a message. "
         "Reference it by name, or ask the user to consume it themselves."
+        f"\n\nFalse positive? python3 -m omp.telemetry --false-positive {event_id}"
     )
-    if event_id:
-        message += f"\n\nFalse positive? python3 -m omp.telemetry --false-positive {event_id}"
-    return {"action": "block", "message": message}
+    refusal = {"action": "block", "message": message}
+    telemetry.record("hermes", tool_name, kinds, "block", latency_ms, event_id=event_id)
+    return refusal
 
 
 def on_pre_llm_call(session_id: str, user_message: str, **kwargs: Any) -> dict[str, str] | None:
@@ -98,8 +97,7 @@ def on_pre_llm_call(session_id: str, user_message: str, **kwargs: Any) -> dict[s
     if interception is None:
         return None
     kinds = [outcome.kind for outcome in interception.outcomes]
-    telemetry.record("hermes", "prompt", kinds, "context", latency_ms)
-    return {
+    injection = {
         "context": (
             f"[OhMyPrivacy] The user's message contained {len(interception.outcomes)} secret(s), "
             f"stored in the {interception.vault} vault:\n{_describe(interception)}\n"
@@ -108,6 +106,8 @@ def on_pre_llm_call(session_id: str, user_message: str, **kwargs: Any) -> dict[s
             "Cleaned version of the message:\n" + interception.cleaned
         )
     }
+    telemetry.record("hermes", "prompt", kinds, "context", latency_ms)
+    return injection
 
 
 def register(ctx: Any) -> None:

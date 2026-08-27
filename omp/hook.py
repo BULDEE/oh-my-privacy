@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import subprocess
 import sys
 import time
@@ -75,7 +76,7 @@ def describe(interception: Interception) -> str:
     return "\n".join(lines)
 
 
-def block_response(interception: Interception, channels: list[str], event_id: str | None) -> dict[str, object]:
+def block_response(interception: Interception, channels: list[str], event_id: str) -> dict[str, object]:
     count = len(interception.outcomes)
     where = " and ".join(channels) if channels else "below only"
     reason = (
@@ -84,8 +85,7 @@ def block_response(interception: Interception, channels: list[str], event_id: st
         f"Your cleaned message is available via {where}. Paste it as is to continue:\n\n"
         f"--- cleaned message ---\n{interception.cleaned}"
     )
-    if event_id:
-        reason += f"\n\nFalse positive? python3 -m omp.telemetry --false-positive {event_id}"
+    reason += f"\n\nFalse positive? python3 -m omp.telemetry --false-positive {event_id}"
     return {
         "decision": "block",
         "reason": reason,
@@ -122,11 +122,12 @@ def main() -> int:
     history.spawn_background(since_ms)
     paste_cache.scrub_recent()
     kinds = [outcome.kind for outcome in interception.outcomes]
-    # Must happen before the response is built: the hint line below needs event_id. A slow/hung telemetry
-    # write can therefore delay this response past the host's hook timeout - accepted, matches record()'s
-    # own "never raises, may block" contract.
-    event_id = telemetry.record("claude_code", "prompt", kinds, "block", latency_ms)
+    event_id = secrets.token_hex(4)
     print(json.dumps(block_response(interception, hand_back(config, interception.cleaned, interception.vault), event_id)))
+    # stdout is a block-buffered pipe here: flush before telemetry, so the block decision is already
+    # delivered even if the store's filesystem hangs. Telemetry can then only be lost, never blocking.
+    sys.stdout.flush()
+    telemetry.record("claude_code", "prompt", kinds, "block", latency_ms, event_id=event_id)
     return 0
 
 
