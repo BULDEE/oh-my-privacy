@@ -29,6 +29,18 @@ class Workspace(unittest.TestCase):
         self.work = Path(tempfile.mkdtemp())
         self.env_file = self.work / ".env"
         self.env_file.write_text(f"DEBUG=1\nANTHROPIC_API_KEY={FAKE}\n")
+        self.previous_stats = os.environ.get("OMP_STATS")
+        self.previous_config = os.environ.get("OMP_CONFIG")
+        os.environ["OMP_STATS"] = str(self.work / "stats.json")
+        os.environ["OMP_CONFIG"] = str(self.work / "omp.json")
+
+    def tearDown(self) -> None:
+        for name, previous in (("OMP_STATS", self.previous_stats), ("OMP_CONFIG", self.previous_config)):
+            if previous is None:
+                if name in os.environ:
+                    del os.environ[name]
+            else:
+                os.environ[name] = previous
 
     def bash_payload(self, command: str) -> dict[str, object]:
         return {"tool_name": "Bash", "tool_input": {"command": command}}
@@ -233,6 +245,7 @@ class PostToolScrub(Workspace):
         stats = stats_path.read_text()
         self.assertIn('"host": "claude_code"', stats)
         self.assertIn('"action": "scrub"', stats)
+
 
 if __name__ == "__main__":
     unittest.main()
