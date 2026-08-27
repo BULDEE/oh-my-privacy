@@ -221,5 +221,18 @@ class PostToolScrub(Workspace):
         self.assertIn("could not be masked", str(response["hookSpecificOutput"]["additionalContext"]))  # type: ignore[index]
 
 
+    def test_scrub_records_telemetry(self) -> None:
+        stats_path = self.work / "stats.json"
+        transcript = self.work / "t.jsonl"
+        transcript.write_text(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "content": f"token {FAKE}"}]}}) + "\n")
+        run_hook(
+            "post_scrub.py",
+            {"tool_name": "mcp__x__vars", "tool_input": {}, "tool_response": {"K": FAKE}, "session_id": "s1", "transcript_path": str(transcript)},
+            {"OMP_FILE_HISTORY": str(self.work / "file-history"), "OMP_PASTE_CACHE": str(self.work / "nocache"), "OMP_STATS": str(stats_path)},
+        )
+        stats = stats_path.read_text()
+        self.assertIn('"host": "claude_code"', stats)
+        self.assertIn('"action": "scrub"', stats)
+
 if __name__ == "__main__":
     unittest.main()

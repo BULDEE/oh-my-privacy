@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from omp import history, paste_cache  # noqa: E402
+from omp import history, paste_cache, telemetry  # noqa: E402
 from omp.detect import detect  # noqa: E402
 from omp.pre_read import MASKED_ROOT  # noqa: E402
 
@@ -106,8 +106,12 @@ def _iter_string_items(values: Iterable[object]) -> Iterator[str]:
         yield from _iter_strings(item)
 
 
-def response_has_secrets(tool_response: object) -> int:
-    return sum(len(detect(text)[1]) for text in _iter_strings(tool_response))
+def response_kinds(value: object) -> list[str]:
+    kinds: list[str] = []
+    for text in _iter_strings(value):
+        _, findings = detect(text)
+        kinds += [finding.kind for finding in findings]
+    return kinds
 
 
 def main() -> int:
@@ -118,13 +122,18 @@ def main() -> int:
     if not isinstance(payload, dict):
         return 0
     tool_name = str(payload.get("tool_name", ""))
-    leaked = response_has_secrets(payload.get("tool_response"))
-    typed = response_has_secrets(payload.get("tool_input"))
-    if not leaked and not typed and tool_name not in EDIT_TOOLS:
+    started = time.perf_counter()
+    leaked_kinds = response_kinds(payload.get("tool_response"))
+    typed_kinds = response_kinds(payload.get("tool_input"))
+    latency_ms = (time.perf_counter() - started) * 1000
+    if not leaked_kinds and not typed_kinds and tool_name not in EDIT_TOOLS:
         return 0
-    scrubbed = scrub_traces(payload, leaked + typed)
-    if leaked:
-        print(json.dumps(warning(tool_name, leaked, scrubbed)))
+    scrubbed = scrub_traces(payload, len(leaked_kinds) + len(typed_kinds))
+    all_kinds = leaked_kinds + typed_kinds
+    if all_kinds:
+        telemetry.record("claude_code", tool_name or "unknown", all_kinds, "scrub", latency_ms)
+    if leaked_kinds:
+        print(json.dumps(warning(tool_name, len(leaked_kinds), scrubbed)))
     return 0
 
 
