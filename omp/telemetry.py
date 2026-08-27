@@ -4,12 +4,18 @@ Every host times its own `detect()`/`intercept()` call and records the outcome h
 many interceptions, of what kind, at what latency, and whether the user later disputed one
 as a false positive. Nothing leaves the machine; the store lives next to `omp.json`. A
 value never reaches this module: only `Finding.kind` (a category label) is ever recorded.
+
+This is a best-effort instrument, never a gate: `record()` and `mark_false_positive()`
+catch every exception, so a corrupt, hostile or unwritable store can never propagate a
+failure into the host's block decision. Hosts generate their own event id and emit their
+decision before calling in here, so telemetry is off the critical path entirely.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import secrets
@@ -25,17 +31,36 @@ DEFAULT_STATS_PATH = Path.home() / ".claude" / "omp-stats.json"
 RING_BUFFER_SIZE = 50
 VALID_ACTIONS: frozenset[str] = frozenset({"block", "mask", "scrub", "context"})
 MAX_LABEL_LENGTH = 64
+MAX_STATS_BYTES = 2_000_000
+MAX_BUCKETS = 500
 _UNSAFE_LABEL_CHARS = re.compile(r"[^A-Za-z0-9_.-]")
 
 
 def _sanitize_label(value: str) -> str:
-    """Strip `host`/`tool` to a safe character set before they reach the bucket key or the ring buffer.
+    """Strip `host`/`tool`/`kind` to a safe character set before they reach the bucket key or the ring buffer.
 
-    Both values can originate from a tool name a host passes through largely unchecked
+    All three can originate from a name a host passes through largely unchecked
     (`payload.get("tool_name", "")` in `post_scrub.py`); this keeps them from injecting
     control characters or shell metacharacters into the store, and therefore into --report's output.
     """
     return _UNSAFE_LABEL_CHARS.sub("_", value)[:MAX_LABEL_LENGTH]
+
+
+def _as_int(value: object) -> int:
+    """A store file can be written by anything on this machine: never trust a field's type or range."""
+    if not isinstance(value, (int, float)):
+        return 0
+    try:
+        return int(value)
+    except (ValueError, OverflowError):
+        return 0
+
+
+def _as_float(value: object) -> float:
+    if not isinstance(value, (int, float)):
+        return 0.0
+    result = float(value)
+    return result if math.isfinite(result) else 0.0
 
 
 def stats_path() -> Path:
@@ -46,8 +71,8 @@ def stats_path() -> Path:
 def load(path: Path | None = None) -> dict[str, object]:
     target = path or stats_path()
     try:
-        raw = json.loads(target.read_text())
-    except (OSError, ValueError):
+        raw = json.loads(target.read_text()) if target.stat().st_size <= MAX_STATS_BYTES else None
+    except Exception:
         raw = None
     if not isinstance(raw, dict):
         raw = {}
@@ -58,11 +83,22 @@ def load(path: Path | None = None) -> dict[str, object]:
 
 
 def _save(path: Path, store: dict[str, object]) -> None:
+    """Write through a fresh temp inode, then rename: never follow a symlink, never leave a half-written store."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w") as handle:
-        json.dump(store, handle, indent=2)
-        handle.write("\n")
+    temporary = path.with_name(path.name + ".tmp")
+    descriptor = os.open(str(temporary), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(descriptor, "w") as handle:
+            # `os.open`'s mode argument is ignored when the temp file already exists: force it shut either way.
+            os.fchmod(handle.fileno(), 0o600)
+            json.dump(store, handle, indent=2)
+            handle.write("\n")
+        temporary.replace(path)
+    except Exception:
+        # A half-written temp file must never outlive the failure: json.dump streams, so it can
+        # already hold whatever the caller handed in before hitting a value it cannot serialize.
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def _bucket_key(host: str, tool: str, kind: str, action: str) -> str:
@@ -70,21 +106,41 @@ def _bucket_key(host: str, tool: str, kind: str, action: str) -> str:
 
 
 def _bump(counters: dict[str, object], key: str, latency_ms: float) -> None:
+    if key not in counters and len(counters) >= MAX_BUCKETS:
+        return
     raw_bucket = counters.get(key)
-    bucket = raw_bucket if isinstance(raw_bucket, dict) else {"count": 0, "latency_ms_total": 0.0, "false_positive_count": 0}
-    bucket["count"] = int(bucket.get("count", 0)) + 1
-    bucket["latency_ms_total"] = float(bucket.get("latency_ms_total", 0.0)) + latency_ms
-    counters[key] = bucket
+    bucket = raw_bucket if isinstance(raw_bucket, dict) else {}
+    counters[key] = {
+        "count": _as_int(bucket.get("count", 0)) + 1,
+        "latency_ms_total": _as_float(bucket.get("latency_ms_total", 0.0)) + latency_ms,
+        "false_positive_count": _as_int(bucket.get("false_positive_count", 0)),
+    }
 
 
-def record(host: str, tool: str, kinds: list[str], action: str, latency_ms: float, path: Path | None = None) -> str | None:
+def record(
+    host: str,
+    tool: str,
+    kinds: list[str],
+    action: str,
+    latency_ms: float,
+    path: Path | None = None,
+    event_id: str | None = None,
+) -> str | None:
     # craftsman-ignore: PY002 (brief-specified implementation, kept as one unit for the single try/except no-raise contract)
-    """Best-effort: never raises. Returns None when telemetry is off, the input is invalid, or the write fails."""
-    if action not in VALID_ACTIONS or not kinds:
+    """Best-effort: never raises. Returns None when telemetry is off, the input is invalid, or the write fails.
+
+    `kinds` must be plain category labels (`Finding.kind`), never `Finding` objects: a repr
+    of a `Finding` carries the value. Anything that is not a `str` is refused outright.
+    """
+    if action not in VALID_ACTIONS or not isinstance(host, str) or not isinstance(tool, str):
         return None
-    host = _sanitize_label(host)
-    tool = _sanitize_label(tool)
+    if not kinds or not all(isinstance(kind, str) for kind in kinds):
+        return None
     try:
+        # Inside the try as well: a caller that defeats the guards above must still not get an exception back.
+        host = _sanitize_label(host)
+        tool = _sanitize_label(tool)
+        labels = [_sanitize_label(kind) for kind in kinds]
         config = config_module.load()
         if not config.telemetry:
             return None
@@ -94,20 +150,20 @@ def record(host: str, tool: str, kinds: list[str], action: str, latency_ms: floa
         if not isinstance(counters, dict):
             counters = {}
             store["counters"] = counters
-        for kind in kinds:
-            _bump(counters, _bucket_key(host, tool, kind, action), latency_ms)
+        for label in labels:
+            _bump(counters, _bucket_key(host, tool, label, action), latency_ms)
         events = store["recent_events"]
         if not isinstance(events, list):
             events = []
             store["recent_events"] = events
-        event_id = secrets.token_hex(4)
+        event_id = event_id or secrets.token_hex(4)
         events.append(
             {
                 "id": event_id,
                 "ts": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "host": host,
                 "tool": tool,
-                "kinds": list(kinds),
+                "kinds": labels,
                 "action": action,
                 "latency_ms": latency_ms,
                 "false_positive": False,
@@ -116,12 +172,15 @@ def record(host: str, tool: str, kinds: list[str], action: str, latency_ms: floa
         del events[:-RING_BUFFER_SIZE]
         _save(target, store)
         return event_id
-    except (OSError, ValueError, TypeError):
+    except Exception:
         return None
 
 
 def mark_false_positive(event_id: str, path: Path | None = None) -> bool:
+    """Best-effort: never raises. Returns False when telemetry is off, the id is unknown, or the write fails."""
     try:
+        if not config_module.load().telemetry:
+            return False
         target = path or stats_path()
         store = load(target)
         events = store.get("recent_events")
@@ -140,12 +199,12 @@ def mark_false_positive(event_id: str, path: Path | None = None) -> bool:
             for kind in event.get("kinds", []):
                 bucket = counters.get(_bucket_key(host, tool, str(kind), action))
                 if isinstance(bucket, dict):
-                    bucket["false_positive_count"] = int(bucket.get("false_positive_count", 0)) + 1
+                    bucket["false_positive_count"] = _as_int(bucket.get("false_positive_count", 0)) + 1
             break
         if matched:
             _save(target, store)
         return matched
-    except (OSError, ValueError, TypeError):
+    except Exception:
         return False
 
 
@@ -161,12 +220,18 @@ def format_report(store: dict[str, object]) -> str:
         bucket = counters[key]
         if not isinstance(bucket, dict):
             continue
-        count = int(bucket.get("count", 0))
-        total_latency = float(bucket.get("latency_ms_total", 0.0))
-        false_positives = int(bucket.get("false_positive_count", 0))
+        try:
+            count = int(bucket.get("count", 0))
+            total_latency = float(bucket.get("latency_ms_total", 0.0))
+            false_positives = int(bucket.get("false_positive_count", 0))
+        except (ValueError, OverflowError, TypeError):
+            continue
+        if not math.isfinite(total_latency):
+            continue
         average = total_latency / count if count else 0.0
         rate = (false_positives / count * 100) if count else 0.0
-        lines.append(f"{key:<45} {count:>6} {average:>7.1f}ms {rate:>14.1f}%")
+        # Sanitized on read too: the store is a plain file any local process can rewrite, and this line goes to a terminal.
+        lines.append(f"{_sanitize_label(str(key)):<45} {count:>6} {average:>7.1f}ms {rate:>14.1f}%")
     return "\n".join(lines)
 
 
