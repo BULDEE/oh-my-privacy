@@ -82,7 +82,9 @@ def _read_json(target: Path) -> dict[str, object] | None:
             if os.fstat(handle.fileno()).st_size > MAX_CONFIG_BYTES:
                 return None
             raw = json.loads(handle.read())
-    except (OSError, ValueError):
+    except Exception:
+        # Deeply nested JSON raises RecursionError (a RuntimeError, not ValueError) before the size
+        # cap can help: matches telemetry.py's load(), same reasoning, same "never raises" contract.
         return None
     return raw if isinstance(raw, dict) else None
 
