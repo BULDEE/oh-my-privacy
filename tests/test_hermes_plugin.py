@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import hermes as plugin  # noqa: E402
 
-FAKE = "$OMP_ANTHROPIC_ACB021AC"
+FAKE = "sk-ant-api03-FAKEKEYFORTESTINGONLY0000000000"
 
 
 class FakeContext:
