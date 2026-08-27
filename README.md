@@ -1,6 +1,12 @@
 # OhMyPrivacy
 
-Secret guardrail for AI agents. Two hosts, one core (`omp/`), zero dependencies beyond
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-blueviolet?logo=claude)](https://code.claude.com)
+[![Hermes Agent](https://img.shields.io/badge/Hermes%20Agent-plugin-orange)](https://hermes-agent.nousresearch.com)
+[![CI](https://img.shields.io/github/actions/workflow/status/BULDEE/oh-my-privacy/ci.yml?label=CI)](.github/workflows/ci.yml)
+[![Version](https://img.shields.io/github/v/tag/BULDEE/oh-my-privacy?label=version)](plugin.json)
+
+**Secrets never reach the model.** Two hosts, one core (`omp/`), zero dependencies beyond
 Python 3.11+.
 
 - **Claude Code**: a `UserPromptSubmit` hook **blocks** any message that contains a secret

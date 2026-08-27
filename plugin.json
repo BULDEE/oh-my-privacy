@@ -9,5 +9,5 @@
     "url": "https://buldee.com"
   },
   "license": "MIT",
-  "keywords": ["security", "secrets", "guardrail"]
+  "keywords": ["security", "secrets", "guardrail", "claude-code", "hermes", "hooks", "ai-agents"]
 }
