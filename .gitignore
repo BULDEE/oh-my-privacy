@@ -4,3 +4,4 @@ __pycache__/
 *.age
 identity.age
 omp.json
+.worktrees/
