@@ -129,6 +129,15 @@ class ReadRedirection(Workspace):
         binary.write_bytes(b"\x00\x01" + FAKE.encode())
         self.assertIsNone(run_hook("pre_read.py", {"tool_name": "Read", "tool_input": {"file_path": str(binary)}}))
 
+    def test_masking_records_telemetry(self) -> None:
+        stats_path = self.work / "stats.json"
+        payload = {"tool_name": "Read", "tool_input": {"file_path": str(self.env_file)}}
+        run_hook("pre_read.py", payload, {"OMP_MASKED_DIR": str(self.work / "masked"), "OMP_STATS": str(stats_path)})
+        stats = stats_path.read_text()
+        self.assertIn('"host": "claude_code"', stats)
+        self.assertIn('"tool": "Read"', stats)
+        self.assertIn('"action": "mask"', stats)
+
 
 @unittest.skipUnless(CLAUDE, "claude binary not found (ripgrep host)")
 class GrepContent(Workspace):
