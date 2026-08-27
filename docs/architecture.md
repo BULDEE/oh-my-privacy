@@ -103,6 +103,7 @@ failure path returns `DiscardAdapter`.
 | A vault | one class in `omp/adapters/`, one line in `REGISTRY` | `NoReadPathInvariant` still green, a store round-trip test |
 | A secret format | one tuple in `PREFIX_PATTERNS` or `FRAGMENT_PATTERNS` | a detection test and a precision test on prose |
 | A host | one composition root calling `usecase.intercept` | a simulated-context test plus a real-host validation |
+| Telemetry on a new host | time the `detect()`/`intercept()` call, one `telemetry.record(...)` line | a subprocess or in-process test asserting the bucket appears in the stats file |
 
 ## Repository layout
 

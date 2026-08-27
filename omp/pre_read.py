@@ -13,10 +13,12 @@ import hashlib
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from omp import telemetry  # noqa: E402
 from omp.detect import detect  # noqa: E402
 
 MASKED_ROOT = Path(os.environ.get("OMP_MASKED_DIR", str(Path.home() / ".claude" / "omp" / "masked"))).expanduser()
@@ -36,20 +38,20 @@ def write_private(path: Path, text: str) -> None:
         handle.write(text)
 
 
-def mask_file(original: Path) -> tuple[Path | None, int]:
-    """Return the masked copy path and the number of secrets, or (None, 0) when nothing to mask."""
+def mask_file(original: Path) -> tuple[Path | None, list[str]]:
+    """Return the masked copy path and the kinds found, or (None, []) when nothing to mask."""
     try:
         raw = original.read_bytes()
     except OSError:
-        return None, 0
+        return None, []
     if len(raw) > MAX_BYTES or b"\x00" in raw[:4096]:
-        return None, 0
+        return None, []
     cleaned, findings = detect(raw.decode("utf-8", errors="replace"))
     if not findings:
-        return None, 0
+        return None, []
     target = masked_copy_path(original)
     write_private(target, cleaned)
-    return target, len(findings)
+    return target, [finding.kind for finding in findings]
 
 
 def requested_file(payload: object) -> tuple[dict[str, object], Path] | None:
@@ -64,6 +66,7 @@ def requested_file(payload: object) -> tuple[dict[str, object], Path] | None:
 
 
 def main() -> int:
+    # craftsman-ignore: PY002 (I/O-only hook entry point, kept as one unit matching this project's other hook mains)
     try:
         payload = json.load(sys.stdin)
     except (OSError, ValueError):
@@ -72,7 +75,9 @@ def main() -> int:
     if request is None:
         return 0
     tool_input, original = request
-    target, count = mask_file(original)
+    started = time.perf_counter()
+    target, kinds = mask_file(original)
+    latency_ms = (time.perf_counter() - started) * 1000
     if target is None:
         return 0
     updated = dict(tool_input)
@@ -82,12 +87,13 @@ def main() -> int:
             "hookEventName": "PreToolUse",
             "updatedInput": updated,
             "additionalContext": (
-                f"OhMyPrivacy masked {count} secret(s) in {original}. You are reading a masked copy; "
+                f"OhMyPrivacy masked {len(kinds)} secret(s) in {original}. You are reading a masked copy; "
                 f"$OMP_* placeholders stand for the values. Never reconstruct them. An Edit whose old_string "
                 f"spans a masked line will not match the real file."
             ),
         },
     }))
+    telemetry.record("claude_code", "Read", kinds, "mask", latency_ms)
     return 0
 
 

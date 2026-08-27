@@ -26,22 +26,24 @@ Configuration written: /Users/you/.claude/omp.json (vault: age)
 ```
 
 ```
-> the service key is eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0In0.FAKEsignature_abcdefghijklmnopqrst, wire it into the MCP config
+> the service key is $OMP_JWT_460C70D6, wire it into the MCP config
 
 OhMyPrivacy intercepted 1 secret(s). The message is BLOCKED: it never reached the model.
 Vault: age.
-  $OMP_JWT_B5352DF5 (jwt): encrypted at /Users/you/.claude/omp/store/OMP_JWT_B5352DF5.age. age -d -i /Users/you/.claude/omp/identity.age /Users/you/.claude/omp/store/OMP_JWT_B5352DF5.age  (asks for your passphrase, impossible without a terminal)
+  $OMP_JWT_460C70D6 (jwt): encrypted at /Users/you/.claude/omp/store/OMP_JWT_460C70D6.age. age -d -i /Users/you/.claude/omp/identity.age /Users/you/.claude/omp/store/OMP_JWT_460C70D6.age  (asks for your passphrase, impossible without a terminal)
 
 Your cleaned message is available via the clipboard and /Users/you/.claude/omp-last-prompt.txt. Paste it as is to continue:
 
 --- cleaned message ---
-the service key is $OMP_JWT_B5352DF5, wire it into the MCP config
+the service key is $OMP_JWT_460C70D6, wire it into the MCP config
+
+False positive? python3 -m omp.telemetry --false-positive 4bf84d3f
 ```
 
-Paste, and the model works with `$OMP_JWT_B5352DF5`. When the value is needed by a program:
+Paste, and the model works with `$OMP_JWT_460C70D6`. When the value is needed by a program:
 
 ```
-$ age -d -i ~/.claude/omp/identity.age ~/.claude/omp/store/OMP_JWT_B5352DF5.age | doppler secrets set SERVICE_API_KEY -p acme -c dev
+$ age -d -i ~/.claude/omp/identity.age ~/.claude/omp/store/OMP_JWT_460C70D6.age | doppler secrets set SERVICE_API_KEY -p acme -c dev
 Enter passphrase: ********
 ```
 

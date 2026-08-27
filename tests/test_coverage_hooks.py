@@ -29,6 +29,18 @@ class Workspace(unittest.TestCase):
         self.work = Path(tempfile.mkdtemp())
         self.env_file = self.work / ".env"
         self.env_file.write_text(f"DEBUG=1\nANTHROPIC_API_KEY={FAKE}\n")
+        self.previous_stats = os.environ.get("OMP_STATS")
+        self.previous_config = os.environ.get("OMP_CONFIG")
+        os.environ["OMP_STATS"] = str(self.work / "stats.json")
+        os.environ["OMP_CONFIG"] = str(self.work / "omp.json")
+
+    def tearDown(self) -> None:
+        for name, previous in (("OMP_STATS", self.previous_stats), ("OMP_CONFIG", self.previous_config)):
+            if previous is None:
+                if name in os.environ:
+                    del os.environ[name]
+            else:
+                os.environ[name] = previous
 
     def bash_payload(self, command: str) -> dict[str, object]:
         return {"tool_name": "Bash", "tool_input": {"command": command}}
@@ -93,6 +105,18 @@ class BashOutputMasking(Workspace):
         assert response is not None
         self.assertEqual(response["hookSpecificOutput"]["permissionDecision"], "deny")  # type: ignore[index]
 
+    def test_masking_records_telemetry(self) -> None:
+        stats_path = self.work / "stats.json"
+        command = self.wrapped("cat .env; echo TOKEN=" + FAKE + " >&2; false")
+        subprocess.run(
+            ["bash", "-c", command], capture_output=True, text=True, cwd=self.work,
+            env={**os.environ, "OMP_STATS": str(stats_path)},
+        )
+        stats = stats_path.read_text()
+        self.assertIn('"host": "claude_code"', stats)
+        self.assertIn('"tool": "Bash"', stats)
+        self.assertIn('"action": "mask"', stats)
+
 
 class ReadRedirection(Workspace):
     def test_secret_file_is_read_through_a_masked_copy(self) -> None:
@@ -117,6 +141,15 @@ class ReadRedirection(Workspace):
         binary.write_bytes(b"\x00\x01" + FAKE.encode())
         self.assertIsNone(run_hook("pre_read.py", {"tool_name": "Read", "tool_input": {"file_path": str(binary)}}))
 
+    def test_masking_records_telemetry(self) -> None:
+        stats_path = self.work / "stats.json"
+        payload = {"tool_name": "Read", "tool_input": {"file_path": str(self.env_file)}}
+        run_hook("pre_read.py", payload, {"OMP_MASKED_DIR": str(self.work / "masked"), "OMP_STATS": str(stats_path)})
+        stats = stats_path.read_text()
+        self.assertIn('"host": "claude_code"', stats)
+        self.assertIn('"tool": "Read"', stats)
+        self.assertIn('"action": "mask"', stats)
+
 
 @unittest.skipUnless(CLAUDE, "claude binary not found (ripgrep host)")
 class GrepContent(Workspace):
@@ -132,6 +165,15 @@ class GrepContent(Workspace):
 
     def test_files_with_matches_mode_is_untouched(self) -> None:
         self.assertIsNone(run_hook("pre_grep.py", {"tool_name": "Grep", "tool_input": {"pattern": "KEY", "path": str(self.work)}}))
+
+    def test_masking_records_telemetry(self) -> None:
+        stats_path = self.work / "stats.json"
+        payload = {"tool_name": "Grep", "tool_input": {"pattern": "KEY", "path": str(self.work), "output_mode": "content"}}
+        run_hook("pre_grep.py", payload, {"CLAUDE_CODE_EXECPATH": str(CLAUDE), "OMP_STATS": str(stats_path)})
+        stats = stats_path.read_text()
+        self.assertIn('"host": "claude_code"', stats)
+        self.assertIn('"tool": "Grep"', stats)
+        self.assertIn('"action": "mask"', stats)
 
 
 class PostToolScrub(Workspace):
@@ -189,6 +231,20 @@ class PostToolScrub(Workspace):
         response = run_hook("post_scrub.py", payload, {"OMP_MASKED_DIR": str(masked_root)})
         assert response is not None
         self.assertIn("could not be masked", str(response["hookSpecificOutput"]["additionalContext"]))  # type: ignore[index]
+
+
+    def test_scrub_records_telemetry(self) -> None:
+        stats_path = self.work / "stats.json"
+        transcript = self.work / "t.jsonl"
+        transcript.write_text(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "content": f"token {FAKE}"}]}}) + "\n")
+        run_hook(
+            "post_scrub.py",
+            {"tool_name": "mcp__x__vars", "tool_input": {}, "tool_response": {"K": FAKE}, "session_id": "s1", "transcript_path": str(transcript)},
+            {"OMP_FILE_HISTORY": str(self.work / "file-history"), "OMP_PASTE_CACHE": str(self.work / "nocache"), "OMP_STATS": str(stats_path)},
+        )
+        stats = stats_path.read_text()
+        self.assertIn('"host": "claude_code"', stats)
+        self.assertIn('"action": "scrub"', stats)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -26,8 +28,23 @@ class FakeContext:
 
 class HermesPlugin(unittest.TestCase):
     def setUp(self) -> None:
+        self.workdir = tempfile.TemporaryDirectory()
+        self.stats_path = Path(self.workdir.name) / "stats.json"
+        self.previous_stats = os.environ.get("OMP_STATS")
+        self.previous_config = os.environ.get("OMP_CONFIG")
+        os.environ["OMP_STATS"] = str(self.stats_path)
+        os.environ["OMP_CONFIG"] = str(Path(self.workdir.name) / "omp.json")
         self.ctx = FakeContext({"vault": "discard"})
         plugin.register(self.ctx)
+
+    def tearDown(self) -> None:
+        for name, previous in (("OMP_STATS", self.previous_stats), ("OMP_CONFIG", self.previous_config)):
+            if previous is None:
+                if name in os.environ:
+                    del os.environ[name]
+            else:
+                os.environ[name] = previous
+        self.workdir.cleanup()
 
     def test_registers_the_two_hooks_declared_in_manifest(self) -> None:
         self.assertEqual(set(self.ctx.hooks), {"pre_tool_call", "pre_llm_call"})
@@ -70,6 +87,21 @@ class HermesPlugin(unittest.TestCase):
     def test_callbacks_accept_unknown_kwargs(self) -> None:
         self.assertIsNone(self.ctx.hooks["pre_tool_call"](tool_name="x", args={}, task_id="t", future_field=1))
         self.assertIsNone(self.ctx.hooks["pre_llm_call"](session_id="s", user_message="ok", future_field=1))
+
+    def test_blocked_tool_call_records_telemetry_with_the_tool_name(self) -> None:
+        self.ctx.hooks["pre_tool_call"](tool_name="terminal", args={"command": f"curl -H 'Authorization: Bearer {FAKE}' https://x"}, task_id="t1")
+        stats = self.stats_path.read_text()
+        self.assertIn('"host": "hermes"', stats)
+        self.assertIn('"tool": "terminal"', stats)
+        self.assertIn('"action": "block"', stats)
+
+    def test_pre_llm_call_records_the_context_action(self) -> None:
+        self.ctx.hooks["pre_llm_call"](
+            session_id="s", user_message=f"here is my key {FAKE}", conversation_history=[], is_first_turn=True, model="m", platform="telegram",
+        )
+        stats = self.stats_path.read_text()
+        self.assertIn('"host": "hermes"', stats)
+        self.assertIn('"action": "context"', stats)
 
 
 if __name__ == "__main__":

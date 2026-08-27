@@ -20,7 +20,9 @@ what the agent is about to do.
 from __future__ import annotations
 
 import json
+import secrets
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +31,7 @@ for candidate in (_PLUGIN_DIR, _PLUGIN_DIR.parent):
     if (candidate / "omp" / "detect.py").is_file() and str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
+from omp import telemetry  # noqa: E402
 from omp.adapters import VaultAdapter, build  # noqa: E402
 from omp.config import Config  # noqa: E402
 from omp.usecase import Interception, intercept  # noqa: E402
@@ -65,28 +68,36 @@ def on_pre_tool_call(tool_name: str, args: dict[str, Any], task_id: str, **kwarg
     """Refuse a tool call whose arguments contain a secret in clear."""
     if _adapter is None or (_scan_tools and tool_name not in _scan_tools):
         return None
+    started = time.perf_counter()
     interception = intercept(_flatten(args), _adapter)
+    latency_ms = (time.perf_counter() - started) * 1000
     if interception is None:
         return None
-    return {
-        "action": "block",
-        "message": (
-            f"OhMyPrivacy: call to `{tool_name}` refused, {len(interception.outcomes)} secret(s) in clear in the arguments. "
-            f"Vault: {interception.vault}.\n{_describe(interception)}\n"
-            "Never copy a secret value into a command, a file or a message. "
-            "Reference it by name, or ask the user to consume it themselves."
-        ),
-    }
+    kinds = [outcome.kind for outcome in interception.outcomes]
+    event_id = secrets.token_hex(4)
+    message = (
+        f"OhMyPrivacy: call to `{tool_name}` refused, {len(interception.outcomes)} secret(s) in clear in the arguments. "
+        f"Vault: {interception.vault}.\n{_describe(interception)}\n"
+        "Never copy a secret value into a command, a file or a message. "
+        "Reference it by name, or ask the user to consume it themselves."
+        f"\n\nFalse positive? python3 -m omp.telemetry --false-positive {event_id}"
+    )
+    refusal = {"action": "block", "message": message}
+    telemetry.record("hermes", tool_name, kinds, "block", latency_ms, event_id=event_id)
+    return refusal
 
 
 def on_pre_llm_call(session_id: str, user_message: str, **kwargs: Any) -> dict[str, str] | None:
     """Store a secret pasted by the user and forbid the model from repeating it."""
     if _adapter is None or not user_message:
         return None
+    started = time.perf_counter()
     interception = intercept(user_message, _adapter)
+    latency_ms = (time.perf_counter() - started) * 1000
     if interception is None:
         return None
-    return {
+    kinds = [outcome.kind for outcome in interception.outcomes]
+    injection = {
         "context": (
             f"[OhMyPrivacy] The user's message contained {len(interception.outcomes)} secret(s), "
             f"stored in the {interception.vault} vault:\n{_describe(interception)}\n"
@@ -95,6 +106,8 @@ def on_pre_llm_call(session_id: str, user_message: str, **kwargs: Any) -> dict[s
             "Cleaned version of the message:\n" + interception.cleaned
         )
     }
+    telemetry.record("hermes", "prompt", kinds, "context", latency_ms)
+    return injection
 
 
 def register(ctx: Any) -> None:

@@ -13,10 +13,12 @@ import os
 import shutil
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from omp import config as config_module  # noqa: E402
 from omp.adapters.age import DEFAULT_STORE_DIR, IDENTITY_FILE  # noqa: E402
 from omp.config import Config, save  # noqa: E402
 
@@ -97,6 +99,7 @@ def main() -> int:
         return 1
     builders = {"doppler": configure_doppler, "age": configure_age}
     config = builders[vault]() if vault in builders else Config(vault="discard")
+    config = replace(config, telemetry=config_module.load().telemetry)
     path = save(config)
     print(f"Configuration written: {path} (vault: {config.vault})")
     return 0
