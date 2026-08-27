@@ -1,6 +1,7 @@
 {
   "vault": "age",
   "clipboard": true,
+  "telemetry": true,
   "age": {
     "recipient": "age1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqs3290gq",
     "store_dir": "~/.claude/omp"

@@ -24,18 +24,20 @@ name: `$OMP_JWT_B5352DF5`.
 A staging key pasted into a Claude Code prompt. The message never reaches the model:
 
 ```console
-$ echo '{"prompt":"here is our staging key sk-ant-api03-...FAKE... can you use it to call the API"}' \
+$ echo '{"prompt":"here is our staging key sk-ant-api03-7Jk2mQ9xVb4Lp8Rz3Wc6Yd1Nt5Fh0Sg2Vb-real-example-shaped-testkey can you use it to call the API"}' \
   | python3 omp/hook.py
 
 OhMyPrivacy intercepted 1 secret(s). The message is BLOCKED: it never reached the model.
 Vault: discard.
-  $OMP_ANTHROPIC_08A3C1A6 (anthropic): discarded (no vault configured). the value no
+  $OMP_ANTHROPIC_7C9ED3C7 (anthropic): discarded (no vault configured). the value no
   longer exists; set it again outside this session, or configure a vault: python3 -m omp.setup
 
 Your cleaned message is available via ~/.claude/omp-last-prompt.txt. Paste it as is to continue:
 
 --- cleaned message ---
-here is our staging key $OMP_ANTHROPIC_08A3C1A6 can you use it to call the API
+here is our staging key $OMP_ANTHROPIC_7C9ED3C7 can you use it to call the API
+
+False positive? python3 -m omp.telemetry --false-positive 284c09c8
 ```
 
 Not a mockup: real output of `omp/hook.py` on a `UserPromptSubmit` event, default vault
@@ -88,6 +90,20 @@ Level 1 is for what must be shared.
 No adapter exposes a read. A test enforces it (`tests/test_adapters.py`,
 `NoReadPathInvariant`). OhMyPrivacy never builds a path back to a value: what does not exist
 cannot be exfiltrated.
+
+## Local telemetry
+
+Every host times its own interception and records volume, latency and false-positive
+disputes to `~/.claude/omp-stats.json`: how many secrets, of what kind, in what host, at
+what latency cost, and how often a block turns out to be a false positive. A value is
+never recorded, only `Finding.kind` (a category label like `anthropic` or `github`). On by
+default, 100% local, never leaves the machine. Turn it off with `"telemetry": false` in
+`omp.json`.
+
+```bash
+python3 -m omp.telemetry --report                        # counts, latency, false-positive rate
+python3 -m omp.telemetry --false-positive <id>            # dispute a block; id is printed with it
+```
 
 ## Installation, Claude Code
 
@@ -254,11 +270,13 @@ password in prose. The threat model is the accident, not the adversary.
 - Bash output is no longer streamed: it is masked once the command ends.
 - File-history snapshots (`/rewind`) are scrubbed only with `OMP_SCRUB_FILE_HISTORY=1`:
   a masked snapshot restored over a real file would erase its secrets.
+- Telemetry counters have no inter-process lock: two sessions racing a write can each lose
+  one increment (`tests/test_known_limits.py::test_concurrent_writers_can_lose_an_increment`).
 
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v      # 76 tests, 4 documented limits
+python3 -m unittest discover -s tests -v      # 115 tests, 5 documented limits
 claude plugin validate . --strict
 hermes plugins doctor hermes --ci             # on a machine with Hermes
 ```

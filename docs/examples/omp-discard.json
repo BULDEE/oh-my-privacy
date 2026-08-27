@@ -1,4 +1,5 @@
 {
   "vault": "discard",
-  "clipboard": true
+  "clipboard": true,
+  "telemetry": true
 }
