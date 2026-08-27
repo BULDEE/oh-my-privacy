@@ -1,5 +1,5 @@
 name: oh-my-privacy
-version: 0.2.0
+version: 0.3.0
 manifest_version: 2
 api_version: 1
 description: "Prevents the agent from executing, writing or sending a secret in clear. Intercepted values go to the configured vault (discard, age, doppler) and the agent only receives their name."
