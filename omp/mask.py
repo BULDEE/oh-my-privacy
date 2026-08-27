@@ -10,44 +10,53 @@ name across a prompt, a file read and a command output.
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from omp import telemetry  # noqa: E402
 from omp.detect import detect  # noqa: E402
 
 MAX_BYTES = 8_000_000
 
 
-def mask(text: str) -> tuple[str, int]:
+def mask(text: str) -> tuple[str, list[str]]:
     cleaned, findings = detect(text)
-    return cleaned, len(findings)
+    return cleaned, [finding.kind for finding in findings]
 
 
-def mask_file(path: Path) -> tuple[str, int]:
+def mask_file(path: Path) -> tuple[str, list[str]]:
     try:
         raw = path.read_bytes()
     except OSError:
-        return "", 0
+        return "", []
     if len(raw) > MAX_BYTES:
-        return f"[OhMyPrivacy: output of {len(raw)} bytes exceeds the {MAX_BYTES} byte masking limit and was withheld]\n", 0
+        return f"[OhMyPrivacy: output of {len(raw)} bytes exceeds the {MAX_BYTES} byte masking limit and was withheld]\n", []
     return mask(raw.decode("utf-8", errors="replace"))
 
 
 def main() -> int:
     if len(sys.argv) == 1:
-        cleaned, _ = mask(sys.stdin.read())
+        started = time.perf_counter()
+        cleaned, kinds = mask(sys.stdin.read())
+        latency_ms = (time.perf_counter() - started) * 1000
         sys.stdout.write(cleaned)
+        if kinds:
+            telemetry.record("claude_code", "Bash", kinds, "mask", latency_ms)
         return 0
-    out_text, out_count = mask_file(Path(sys.argv[1]))
+    started = time.perf_counter()
+    out_text, out_kinds = mask_file(Path(sys.argv[1]))
     sys.stdout.write(out_text)
-    err_count = 0
+    err_kinds: list[str] = []
     if len(sys.argv) > 2:
-        err_text, err_count = mask_file(Path(sys.argv[2]))
+        err_text, err_kinds = mask_file(Path(sys.argv[2]))
         sys.stderr.write(err_text)
-    total = out_count + err_count
-    if total:
-        sys.stderr.write(f"[OhMyPrivacy: {total} secret(s) masked in this output; refer to them by their $OMP_* name]\n")
+    latency_ms = (time.perf_counter() - started) * 1000
+    kinds = out_kinds + err_kinds
+    if kinds:
+        telemetry.record("claude_code", "Bash", kinds, "mask", latency_ms)
+        sys.stderr.write(f"[OhMyPrivacy: {len(kinds)} secret(s) masked in this output; refer to them by their $OMP_* name]\n")
     return 0
 
 

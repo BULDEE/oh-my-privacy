@@ -93,6 +93,18 @@ class BashOutputMasking(Workspace):
         assert response is not None
         self.assertEqual(response["hookSpecificOutput"]["permissionDecision"], "deny")  # type: ignore[index]
 
+    def test_masking_records_telemetry(self) -> None:
+        stats_path = self.work / "stats.json"
+        command = self.wrapped("cat .env; echo TOKEN=" + FAKE + " >&2; false")
+        subprocess.run(
+            ["bash", "-c", command], capture_output=True, text=True, cwd=self.work,
+            env={**os.environ, "OMP_STATS": str(stats_path)},
+        )
+        stats = stats_path.read_text()
+        self.assertIn('"host": "claude_code"', stats)
+        self.assertIn('"tool": "Bash"', stats)
+        self.assertIn('"action": "mask"', stats)
+
 
 class ReadRedirection(Workspace):
     def test_secret_file_is_read_through_a_masked_copy(self) -> None:
