@@ -48,13 +48,21 @@ def _sanitize_label(value: str) -> str:
 
 
 def _as_int(value: object) -> int:
-    """A store file can be written by anything on this machine: never trust a field's type or range."""
+    """A store file can be written by anything on this machine: never trust a field's type or range.
+
+    Clamped, not just type-checked: Python ints have no size limit, so an integer literal just
+    under `json`'s own 4300-digit str-conversion cap survives `int()` unraised, then `+ 1` here
+    pushes it one digit over that cap - `json.dump` raises on the *next* save, which `_save()`
+    cannot recover from once the bad value is already back in the bucket. Clamping keeps every
+    stored count inside a range arithmetic on it can never overflow.
+    """
     if not isinstance(value, (int, float)):
         return 0
     try:
-        return int(value)
+        result = int(value)
     except (ValueError, OverflowError):
         return 0
+    return result if -(2**63) < result < 2**63 else 0
 
 
 def _as_float(value: object) -> float:
@@ -117,10 +125,32 @@ def load(path: Path | None = None) -> dict[str, object]:
     return raw
 
 
+ORPHAN_TMP_AGE_SECONDS = 3600
+
+
+def _sweep_orphan_temp_files(path: Path) -> None:
+    """Best-effort: a killed writer leaves its uniquely-named temp file behind forever.
+
+    Only sweep files older than an hour, so this never touches a concurrent writer's own
+    in-flight temp file - each call's name is unique, but an old one is never still in use.
+    """
+    try:
+        cutoff = datetime.now(UTC).timestamp() - ORPHAN_TMP_AGE_SECONDS
+        for orphan in path.parent.glob(f"{path.name}.*.tmp"):
+            try:
+                if orphan.stat().st_mtime < cutoff:
+                    orphan.unlink(missing_ok=True)
+            except OSError:
+                continue
+    except OSError:
+        pass
+
+
 def _save(path: Path, store: dict[str, object]) -> None:
     """Write through a fresh temp inode, then rename: never follow a symlink, never block on a FIFO,
     never leave a half-written store, never collide with a concurrent writer's temp file."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    _sweep_orphan_temp_files(path)
     temporary = path.with_name(f"{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
     descriptor = _open_nonblocking(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     if descriptor is None:

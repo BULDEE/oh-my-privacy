@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
 import unittest
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,6 +30,18 @@ POISONED_STORE = (
     '{"version":1,"counters":{"claude_code.prompt.anthropic.block":'
     '{"count":1e400,"latency_ms_total":1.0,"false_positive_count":0}},"recent_events":[]}'
 )
+
+
+@contextlib.contextmanager
+def bounded(seconds: int = 5) -> Iterator[None]:
+    """A FIFO-hang regression must fail loudly, not hang the whole suite (or CI) forever."""
+    previous = signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError(f"hung past {seconds}s")))
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 @dataclass(frozen=True)
@@ -50,6 +65,20 @@ class Recording(unittest.TestCase):
         else:
             os.environ["OMP_CONFIG"] = self.previous_config
         self.workdir.cleanup()
+
+    def test_a_fifo_at_omp_config_does_not_hang_record(self) -> None:
+        """record() reads omp.json on every call (the telemetry on/off flag) via omp.config.load(),
+        a path four of the six hosts never touched before telemetry existed. The same FIFO hang
+        this module hardened its own store against applies one file over unless config.py's own
+        reader is hardened too - it now is (see omp/config.py's _read_json)."""
+        config_path = Path(os.environ["OMP_CONFIG"])
+        os.mkfifo(config_path)
+        try:
+            with bounded():
+                event_id = telemetry.record("claude_code", "prompt", ["anthropic"], "block", 1.0, path=self.stats_path)
+        finally:
+            config_path.unlink()
+        self.assertIsNotNone(event_id)
 
     def test_record_creates_store_and_returns_an_id(self) -> None:
         event_id = telemetry.record("claude_code", "prompt", ["anthropic"], "block", 4.2, path=self.stats_path)
@@ -251,7 +280,8 @@ class SaveHardening(unittest.TestCase):
         the FIFO, which POSIX allows unconditionally regardless of the target's type. Net effect:
         the call still succeeds and the FIFO is gone, replaced by a real store - never a hang."""
         os.mkfifo(self.stats_path)
-        event_id = telemetry.record("claude_code", "prompt", ["anthropic"], "block", 1.0, path=self.stats_path)
+        with bounded():
+            event_id = telemetry.record("claude_code", "prompt", ["anthropic"], "block", 1.0, path=self.stats_path)
         self.assertIsNotNone(event_id)
         self.assertFalse(stat.S_ISFIFO(self.stats_path.lstat().st_mode))
         self.assertIn("anthropic", self.stats_path.read_text())
@@ -259,7 +289,8 @@ class SaveHardening(unittest.TestCase):
     def test_a_fifo_at_the_store_path_makes_load_return_the_empty_store_instead_of_hanging(self) -> None:
         os.mkfifo(self.stats_path)
         try:
-            store = telemetry.load(self.stats_path)
+            with bounded():
+                store = telemetry.load(self.stats_path)
         finally:
             self.stats_path.unlink()
         self.assertEqual(store["counters"], {})

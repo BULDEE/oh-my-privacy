@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
 DEFAULT_PATH = Path.home() / ".claude" / "omp.json"
 DEFAULT_VAULT = "discard"
+MAX_CONFIG_BYTES = 100_000
 
 
 @dataclass(frozen=True)
@@ -51,10 +53,35 @@ def load(path: Path | None = None) -> Config:
 
 
 def _read_json(target: Path) -> dict[str, object] | None:
-    if not target.exists():
+    # craftsman-ignore: PY002 (single unit: the fd-open/type-check/read sequence must not be split
+    # without re-litigating where each OSError is caught - same shape already accepted for
+    # omp/telemetry.py's record())
+    """Never block: a hostile local process can replace this path with a FIFO or a device.
+
+    `record()` (`omp/telemetry.py`) reads this file on every interception across four hosts
+    that never touched `omp.json` before telemetry existed; the same `O_NONBLOCK` +
+    `O_NOFOLLOW` + regular-file-only pattern that hardens the telemetry store applies here,
+    duplicated rather than imported to avoid a circular import (telemetry imports config).
+    """
+    try:
+        flags = os.O_RDONLY | os.O_NONBLOCK
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(str(target), flags)
+    except OSError:
         return None
     try:
-        raw = json.loads(target.read_text())
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            os.close(descriptor)
+            return None
+    except OSError:
+        os.close(descriptor)
+        return None
+    try:
+        with os.fdopen(descriptor, "r") as handle:
+            if os.fstat(handle.fileno()).st_size > MAX_CONFIG_BYTES:
+                return None
+            raw = json.loads(handle.read())
     except (OSError, ValueError):
         return None
     return raw if isinstance(raw, dict) else None
