@@ -13,12 +13,13 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from omp import config as config_module  # noqa: E402
-from omp import history, paste_cache  # noqa: E402
+from omp import history, paste_cache, telemetry  # noqa: E402
 from omp.adapters import build  # noqa: E402
 from omp.usecase import Interception, intercept  # noqa: E402
 
@@ -74,7 +75,7 @@ def describe(interception: Interception) -> str:
     return "\n".join(lines)
 
 
-def block_response(interception: Interception, channels: list[str]) -> dict[str, object]:
+def block_response(interception: Interception, channels: list[str], event_id: str | None) -> dict[str, object]:
     count = len(interception.outcomes)
     where = " and ".join(channels) if channels else "below only"
     reason = (
@@ -83,6 +84,8 @@ def block_response(interception: Interception, channels: list[str]) -> dict[str,
         f"Your cleaned message is available via {where}. Paste it as is to continue:\n\n"
         f"--- cleaned message ---\n{interception.cleaned}"
     )
+    if event_id:
+        reason += f"\n\nFalse positive? python3 -m omp.telemetry --false-positive {event_id}"
     return {
         "decision": "block",
         "reason": reason,
@@ -106,7 +109,9 @@ def main() -> int:
     if not prompt:
         return 0
     config = config_module.load()
+    started = time.perf_counter()
     interception = intercept(expand_pastes(prompt), build(config))
+    latency_ms = (time.perf_counter() - started) * 1000
     del prompt
     if interception is None:
         return 0
@@ -114,7 +119,9 @@ def main() -> int:
     history.scrub(since_ms)
     history.spawn_background(since_ms)
     paste_cache.scrub_recent()
-    print(json.dumps(block_response(interception, hand_back(config, interception.cleaned, interception.vault))))
+    kinds = [outcome.kind for outcome in interception.outcomes]
+    event_id = telemetry.record("claude_code", "prompt", kinds, "block", latency_ms)
+    print(json.dumps(block_response(interception, hand_back(config, interception.cleaned, interception.vault), event_id)))
     return 0
 
 

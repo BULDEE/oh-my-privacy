@@ -19,6 +19,7 @@ class HookRun:
     response: dict[str, object] | None
     handed: str
     history: str
+    stats: str
 
 
 def run_hook(prompt: str, config: dict[str, object] | None = None, raw_config: str | None = None) -> HookRun:
@@ -26,6 +27,7 @@ def run_hook(prompt: str, config: dict[str, object] | None = None, raw_config: s
         config_path = Path(workdir) / "omp.json"
         prompt_file = Path(workdir) / "last.txt"
         history_path = Path(workdir) / "history.jsonl"
+        stats_path = Path(workdir) / "stats.json"
         history_path.write_text(json.dumps({"display": prompt}) + "\n")
         payload: dict[str, object] = {"vault": "discard", "clipboard": False, "prompt_file": str(prompt_file)}
         payload.update(config or {})
@@ -34,13 +36,14 @@ def run_hook(prompt: str, config: dict[str, object] | None = None, raw_config: s
             [sys.executable, str(HOOK)],
             input=json.dumps({"hook_event_name": "UserPromptSubmit", "prompt": prompt}),
             capture_output=True, text=True, timeout=30, check=False,
-            env={**os.environ, "OMP_CONFIG": str(config_path), "OMP_HISTORY": str(history_path), "OMP_CLIPBOARD": "0"},
+            env={**os.environ, "OMP_CONFIG": str(config_path), "OMP_HISTORY": str(history_path), "OMP_CLIPBOARD": "0", "OMP_STATS": str(stats_path)},
         )
         output = completed.stdout.strip()
         return HookRun(
             response=json.loads(output) if output else None,
             handed=prompt_file.read_text() if prompt_file.exists() else "",
             history=history_path.read_text(),
+            stats=stats_path.read_text() if stats_path.exists() else "",
         )
 
 
@@ -90,6 +93,21 @@ class Blocking(unittest.TestCase):
         assert run.response is not None
         self.assertEqual(run.response["decision"], "block")
         self.assertIn("Vault: discard", str(run.response["reason"]))
+
+    def test_block_message_includes_the_false_positive_hint(self) -> None:
+        run = run_hook(f"test {FAKE_ANTHROPIC} end")
+        assert run.response is not None
+        self.assertIn("python3 -m omp.telemetry --false-positive", str(run.response["reason"]))
+
+    def test_block_records_a_telemetry_event(self) -> None:
+        run = run_hook(f"test {FAKE_ANTHROPIC} end")
+        self.assertIn('"host": "claude_code"', run.stats)
+        self.assertIn('"tool": "prompt"', run.stats)
+        self.assertIn('"action": "block"', run.stats)
+
+    def test_telemetry_disabled_records_nothing(self) -> None:
+        run = run_hook(f"test {FAKE_ANTHROPIC} end", {"telemetry": False})
+        self.assertEqual(run.stats, "")
 
 
 if __name__ == "__main__":
