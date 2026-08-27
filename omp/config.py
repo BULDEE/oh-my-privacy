@@ -20,6 +20,7 @@ class Config:
     vault: str = DEFAULT_VAULT
     options: dict[str, str] = field(default_factory=dict)
     clipboard: bool = True
+    telemetry: bool = True
     prompt_file: Path | None = Path.home() / ".claude" / "omp-last-prompt.txt"
 
 
@@ -44,6 +45,7 @@ def load(path: Path | None = None) -> Config:
         vault=vault,
         options=options,
         clipboard=bool(raw.get("clipboard", True)),
+        telemetry=bool(raw.get("telemetry", True)),
         prompt_file=_prompt_file(raw.get("prompt_file", True)),
     )
 
@@ -69,7 +71,7 @@ def _prompt_file(raw: object) -> Path | None:
 def save(config: Config, path: Path | None = None) -> Path:
     target = path or config_path()
     target.parent.mkdir(parents=True, exist_ok=True)
-    payload: dict[str, object] = {"vault": config.vault, "clipboard": config.clipboard}
+    payload: dict[str, object] = {"vault": config.vault, "clipboard": config.clipboard, "telemetry": config.telemetry}
     if config.options:
         payload[config.vault] = dict(config.options)
     if config.prompt_file is None:
