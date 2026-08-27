@@ -40,8 +40,14 @@ class Recording(unittest.TestCase):
     def setUp(self) -> None:
         self.workdir = tempfile.TemporaryDirectory()
         self.stats_path = Path(self.workdir.name) / "stats.json"
+        self.previous_config = os.environ.get("OMP_CONFIG")
+        os.environ["OMP_CONFIG"] = str(Path(self.workdir.name) / "omp.json")
 
     def tearDown(self) -> None:
+        if self.previous_config is None:
+            del os.environ["OMP_CONFIG"]
+        else:
+            os.environ["OMP_CONFIG"] = self.previous_config
         self.workdir.cleanup()
 
     def test_record_creates_store_and_returns_an_id(self) -> None:
@@ -180,8 +186,14 @@ class SaveHardening(unittest.TestCase):
     def setUp(self) -> None:
         self.workdir = tempfile.TemporaryDirectory()
         self.stats_path = Path(self.workdir.name) / "stats.json"
+        self.previous_config = os.environ.get("OMP_CONFIG")
+        os.environ["OMP_CONFIG"] = str(Path(self.workdir.name) / "omp.json")
 
     def tearDown(self) -> None:
+        if self.previous_config is None:
+            del os.environ["OMP_CONFIG"]
+        else:
+            os.environ["OMP_CONFIG"] = self.previous_config
         self.workdir.cleanup()
 
     def test_a_symlinked_store_is_replaced_never_written_through(self) -> None:
