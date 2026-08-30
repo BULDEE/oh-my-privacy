@@ -1,0 +1,7 @@
+# Audit and ops tooling, outside the domain. Walking the Claude Code hook shape
+# (events -> groups -> hooks) is an intrinsic triple loop, not a smell, and a CLI
+# report naturally takes several streams to print.
+rules:
+  NEST001: ignore
+  WARN-PY001: ignore
+  RATCHET001: ignore
