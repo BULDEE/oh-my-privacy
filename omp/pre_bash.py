@@ -74,7 +74,10 @@ def main() -> int:
         return 0
     if command is None:
         command = str(tool_input["command"])
-    if "__omp_o=" in command:
+    # Skip re-wrapping only a command that already IS our wrapper. A substring test let a
+    # caller disable masking by planting `__omp_o=` anywhere (a comment, a variable prefix):
+    # anchor on the exact preamble instead, which nothing but wrap() produces.
+    if command.lstrip().startswith("__omp_o=$(mktemp) && __omp_e=$(mktemp)"):
         return 0
     updated = dict(tool_input)
     updated["command"] = wrap(command)

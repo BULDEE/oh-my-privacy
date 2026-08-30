@@ -104,29 +104,45 @@ def expand_pastes(prompt: str) -> str:
     return prompt + "\n\n--- pasted attachments ---\n" + "\n".join(contents)
 
 
+def scrub_local_traces() -> None:
+    """Best-effort disk cleanup, run only after the block is delivered so it can never block it."""
+    try:
+        since_ms = history.recent_window_start()
+        history.scrub(since_ms)
+        history.spawn_background(since_ms)
+        paste_cache.scrub_recent()
+    except OSError:
+        pass
+
+
+def emit_block(config: config_module.Config, interception: Interception, event_id: str) -> None:
+    """Print the block decision. Writing the cleaned prompt to disk can fail (a full or read-only
+    ~/.claude, a path under a file); it degrades to no channels so a disk error never suppresses
+    the block. Previously any raise between detection and this print left the prompt unblocked and
+    the secret reached the model (F1, fail-open)."""
+    try:
+        channels = hand_back(config, interception.cleaned, interception.vault)
+    except OSError:
+        channels = []
+    print(json.dumps(block_response(interception, channels, event_id)))
+    sys.stdout.flush()
+
+
 def main() -> int:
     prompt = read_prompt()
     if not prompt:
         return 0
     config = config_module.load()
-    cleaned_prompt = expand_pastes(prompt)
-    adapter = build(config)
     started = time.perf_counter()
-    interception = intercept(cleaned_prompt, adapter)
+    interception = intercept(expand_pastes(prompt), build(config))
     latency_ms = (time.perf_counter() - started) * 1000
     del prompt
     if interception is None:
         return 0
-    since_ms = history.recent_window_start()
-    history.scrub(since_ms)
-    history.spawn_background(since_ms)
-    paste_cache.scrub_recent()
     kinds = [outcome.kind for outcome in interception.outcomes]
     event_id = secrets.token_hex(4)
-    print(json.dumps(block_response(interception, hand_back(config, interception.cleaned, interception.vault), event_id)))
-    # stdout is a block-buffered pipe here: flush before telemetry, so the block decision is already
-    # delivered even if the store's filesystem hangs. Telemetry can then only be lost, never blocking.
-    sys.stdout.flush()
+    emit_block(config, interception, event_id)
+    scrub_local_traces()
     telemetry.record("claude_code", "prompt", kinds, "block", latency_ms, event_id=event_id)
     return 0
 

@@ -81,7 +81,11 @@ class BashOutputMasking(Workspace):
         self.assertEqual(shell.stderr, "")
 
     def test_already_wrapped_command_is_left_alone(self) -> None:
-        self.assertIsNone(run_hook("pre_bash.py", self.bash_payload("__omp_o=1; true"), {"OMP_CHAIN_HOOK": ""}))
+        # Idempotence: a command that already IS our wrapper is not re-wrapped. It must carry the
+        # real preamble; a bare `__omp_o=` anywhere (a comment, a variable prefix) must still be
+        # wrapped, or output masking is trivially disabled. That case is asserted in audit_security (B1).
+        already_wrapped = "__omp_o=$(mktemp) && __omp_e=$(mktemp) && true"
+        self.assertIsNone(run_hook("pre_bash.py", self.bash_payload(already_wrapped), {"OMP_CHAIN_HOOK": ""}))
 
     def test_chained_hook_rewrite_is_wrapped(self) -> None:
         chain = self.work / "chain.py"
