@@ -15,6 +15,7 @@ No real value: every fixture is built at run time.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -38,7 +39,8 @@ OPAQUE_TOKEN = "aB3xK9mZq7Lw2Rt5" + "Nv8Bs1HyJd6Fg0Ac" + "pQ4eW3uT1"
 
 def guard_denies(command: str) -> bool:
     payload = json.dumps({"tool_input": {"command": command}})
-    out = subprocess.run([str(GUARD)], input=payload, capture_output=True, text=True, timeout=30, check=False)
+    out = subprocess.run([str(GUARD)], input=payload, capture_output=True, text=True, timeout=30, check=False,
+                         env={**os.environ, "OMP_STATS": os.devnull})
     return bool(out.stdout.strip())
 
 

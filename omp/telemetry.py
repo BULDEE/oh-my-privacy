@@ -308,9 +308,13 @@ def main(argv: list[str] | None = None) -> int:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--false-positive", metavar="ID", help="mark a recent interception id as a false positive")
     group.add_argument("--report", action="store_true", help="print counts, latency and false-positive rate by bucket")
+    group.add_argument("--deny", metavar="RULE", help="record a guard refusal (its rule name) as a block event")
     arguments = parser.parse_args(argv)
     if arguments.report:
         print(format_report(load()))
+        return 0
+    if arguments.deny:
+        record("claude_code", "Bash", [arguments.deny], "block", 0.0)
         return 0
     marked = mark_false_positive(arguments.false_positive)
     print("Marked." if marked else f"No event {arguments.false_positive} found in the last {RING_BUFFER_SIZE} interceptions.")

@@ -66,6 +66,22 @@ class Recording(unittest.TestCase):
             os.environ["OMP_CONFIG"] = self.previous_config
         self.workdir.cleanup()
 
+    def test_deny_cli_records_a_block_event_for_the_rule(self) -> None:
+        previous_stats = os.environ.get("OMP_STATS")
+        os.environ["OMP_STATS"] = str(self.stats_path)
+        try:
+            telemetry.main(["--deny", "doppler_read"])
+        finally:
+            if previous_stats is None:
+                os.environ.pop("OMP_STATS", None)
+            else:
+                os.environ["OMP_STATS"] = previous_stats
+        events = telemetry.load(self.stats_path)["recent_events"]
+        self.assertTrue(
+            any(item["action"] == "block" and item["kinds"] == ["doppler_read"] and item["tool"] == "Bash" for item in events),
+            events,
+        )
+
     def test_a_fifo_at_omp_config_does_not_hang_record(self) -> None:
         """record() reads omp.json on every call (the telemetry on/off flag) via omp.config.load(),
         a path four of the six hosts never touched before telemetry existed. The same FIFO hang

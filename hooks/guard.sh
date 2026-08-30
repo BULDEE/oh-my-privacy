@@ -6,7 +6,8 @@
 set -uo pipefail
 
 SPLITTER="$(dirname -- "${BASH_SOURCE[0]}")/split_segments.py"
-readonly SPLITTER
+TELEMETRY="$(dirname -- "${BASH_SOURCE[0]}")/../omp/telemetry.py"
+readonly SPLITTER TELEMETRY
 
 input=$(cat)
 command=$(printf '%s' "$input" | python3 -c "
@@ -20,6 +21,9 @@ except Exception:
 [[ -z "$command" ]] && exit 0
 
 deny() {
+  # Record the refusal (rule name only, never a value) before answering. Best-effort: telemetry
+  # must never delay or break a block, so a failure here is swallowed.
+  python3 "$TELEMETRY" --deny "${2:-guard}" >/dev/null 2>&1 || true
   python3 -c "
 import json, sys
 print(json.dumps({'hookSpecificOutput': {
@@ -50,7 +54,7 @@ judge_doppler() {
   segment_matches "$segment" 'doppler secrets (set|delete) ' && return 0
   segment_matches "$segment" 'doppler (projects|configs|configure|login|logout|me|--version|activity|environments)' && return 0
   segment_matches "$segment" 'doppler run ' && ! segment_matches "$segment" "$RUN_FORBIDDEN" && return 0
-  deny "Doppler: only a silent form is allowed (secrets --only-names, secrets set, run -- <binary> without an interpreter, an echo, a redirection or a secret-bearing \$VAR). OhMyPrivacy never opens a path back to a value: consume it with doppler run -- <binary> without printing it."
+  deny "Doppler: only a silent form is allowed (secrets --only-names, secrets set, run -- <binary> without an interpreter, an echo, a redirection or a secret-bearing \$VAR). OhMyPrivacy never opens a path back to a value: consume it with doppler run -- <binary> without printing it." doppler_read
 }
 
 # age: decryption belongs to the user, on a terminal.
@@ -58,14 +62,14 @@ judge_age() {
   local segment="$1"
   if { segment_matches "$segment" '(^|[[:space:]])age([[:space:]]|$)' && segment_matches "$segment" "$AGE_DECRYPT"; } \
      || segment_matches "$segment" 'age-keygen[[:space:]]+.*-y'; then
-    deny "age: decryption requires the user's passphrase on their terminal. Ask them to decrypt it themselves."
+    deny "age: decryption requires the user's passphrase on their terminal. Ask them to decrypt it themselves." age_decrypt
   fi
 }
 
 # Whole-environment dumps: masked anyway, refused because no task needs them.
 judge_env_dump() {
   if segment_matches "$1" '^[[:space:]]*(env|printenv|export -p|declare -x|set)[[:space:]]*$'; then
-    deny "env, printenv, export -p, declare -x and set dump the whole environment. Target the variable you need."
+    deny "env, printenv, export -p, declare -x and set dump the whole environment. Target the variable you need." env_dump
   fi
 }
 
@@ -79,7 +83,7 @@ judge_secret_files() {
     || segment_matches "$segment" '(^|[[:space:]'\''"])[^[:space:]'\''"]*/credentials([[:space:]'\''"]|$)' \
     || return 0
   segment_matches "$segment" "sed[[:space:]].*s/=\\.\\*/=<masked>/" && return 0
-  deny "This command did not run: nothing was read, and nothing was written. Reads of .env, .zshenv, .netrc, a credentials file or the age identity are refused outright. Redact inline instead: sed 's/=.*/=<masked>/' <file>"
+  deny "This command did not run: nothing was read, and nothing was written. Reads of .env, .zshenv, .netrc, a credentials file or the age identity are refused outright. Redact inline instead: sed 's/=.*/=<masked>/' <file>" secret_file
 }
 
 judge_segment() {
@@ -91,7 +95,7 @@ judge_segment() {
 
 # Pipeline-level rule: the masking pipe is what makes the command acceptable, so it is judged on the whole command.
 if segment_matches "$command" 'railway (variables|list-variables)' && ! segment_matches "$command" 'jq +(-r +)?'"'"'?keys'; then
-  deny "railway variables prints every secret. For NAMES only: railway variables --json | jq keys"
+  deny "railway variables prints every secret. For NAMES only: railway variables --json | jq keys" railway_vars
 fi
 
 # Segments come from hooks/split_segments.py: statement and pipeline separators, minus the

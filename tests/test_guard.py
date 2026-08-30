@@ -9,6 +9,7 @@ AcceptedFalsePositives, not in a comment nobody re-runs.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -24,7 +25,8 @@ VAULT = "dop" + "pler"
 def judge(command: str) -> str | None:
     """Return the refusal reason, or None when the guard lets the command through."""
     payload = json.dumps({"tool_input": {"command": command}})
-    completed = subprocess.run([str(GUARD)], input=payload, capture_output=True, text=True, timeout=30, check=False)
+    completed = subprocess.run([str(GUARD)], input=payload, capture_output=True, text=True, timeout=30, check=False,
+                               env={**os.environ, "OMP_STATS": os.devnull})
     output = completed.stdout.strip()
     if not output:
         return None
@@ -176,7 +178,8 @@ class FailsClosed(unittest.TestCase):
             (hooks / "guard.sh").chmod(0o755)
             (hooks / "split_segments.py").write_text(splitter_source)
             payload = json.dumps({"tool_input": {"command": command}})
-            completed = subprocess.run([str(hooks / "guard.sh")], input=payload, capture_output=True, text=True, timeout=30, check=False)
+            completed = subprocess.run([str(hooks / "guard.sh")], input=payload, capture_output=True, text=True, timeout=30, check=False,
+                                       env={**os.environ, "OMP_STATS": os.devnull})
             return completed.stdout.strip() or None
 
     def test_splitter_that_crashes(self) -> None:
