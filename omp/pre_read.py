@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import sys
 import time
 from pathlib import Path
@@ -82,6 +83,7 @@ def main() -> int:
         return 0
     updated = dict(tool_input)
     updated["file_path"] = str(target)
+    event_id = secrets.token_hex(4)
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
@@ -90,10 +92,11 @@ def main() -> int:
                 f"OhMyPrivacy masked {len(kinds)} secret(s) in {original}. You are reading a masked copy; "
                 f"$OMP_* placeholders stand for the values. Never reconstruct them. An Edit whose old_string "
                 f"spans a masked line will not match the real file."
+                + telemetry.false_positive_hint(event_id)
             ),
         },
     }))
-    telemetry.record("claude_code", "Read", kinds, "mask", latency_ms)
+    telemetry.record("claude_code", "Read", kinds, "mask", latency_ms, event_id=event_id)
     return 0
 
 

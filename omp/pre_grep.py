@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import shutil
 import subprocess
 import sys
@@ -95,19 +96,21 @@ def main() -> int:
     head_limit = tool_input.get("head_limit")
     if isinstance(head_limit, int) and head_limit > 0:
         cleaned = "\n".join(cleaned.splitlines()[:head_limit])
-    print(json.dumps(deny_with(cleaned, len(findings))))
-    telemetry.record("claude_code", "Grep", [finding.kind for finding in findings], "mask", latency_ms)
+    event_id = secrets.token_hex(4)
+    print(json.dumps(deny_with(cleaned, len(findings), event_id)))
+    telemetry.record("claude_code", "Grep", [finding.kind for finding in findings], "mask", latency_ms, event_id=event_id)
     return 0
 
 
-def deny_with(cleaned: str, count: int) -> dict[str, object]:
+def deny_with(cleaned: str, count: int, event_id: str) -> dict[str, object]:
     return {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
             "permissionDecisionReason": (
                 f"OhMyPrivacy ran this search itself: {count} secret(s) in the matches were masked. "
-                f"Use the masked results below; do not retry the search to see the values.\n\n{cleaned}"
+                f"Use the masked results below; do not retry the search to see the values."
+                f"{telemetry.false_positive_hint(event_id)}\n\n{cleaned}"
             ),
         },
     }

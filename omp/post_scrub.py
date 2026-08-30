@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import sys
 import time
 from collections.abc import Iterable, Iterator
@@ -130,10 +131,11 @@ def main() -> int:
         return 0
     scrubbed = scrub_traces(payload, len(leaked_kinds) + len(typed_kinds))
     all_kinds = leaked_kinds + typed_kinds
+    event_id = secrets.token_hex(4)
     if leaked_kinds:
-        print(json.dumps(warning(tool_name, len(leaked_kinds), scrubbed)))
+        print(json.dumps(warning(tool_name, len(leaked_kinds), scrubbed, event_id)))
     if all_kinds:
-        telemetry.record("claude_code", tool_name or "unknown", all_kinds, "scrub", latency_ms)
+        telemetry.record("claude_code", tool_name or "unknown", all_kinds, "scrub", latency_ms, event_id=event_id)
     return 0
 
 
@@ -147,13 +149,14 @@ def scrub_traces(payload: dict[str, object], leaked: int) -> int:
     return scrubbed
 
 
-def warning(tool_name: str, leaked: int, scrubbed: int) -> dict[str, object]:
+def warning(tool_name: str, leaked: int, scrubbed: int, event_id: str) -> dict[str, object]:
     return {
         "hookSpecificOutput": {
             "hookEventName": "PostToolUse",
             "additionalContext": (
                 f"OhMyPrivacy: the output of `{tool_name}` contained {leaked} secret(s) that could not be masked at the source. "
                 f"Local traces were scrubbed ({scrubbed} file(s)). Never repeat these values; tell the user to revoke them."
+                + telemetry.false_positive_hint(event_id)
             ),
         },
     }

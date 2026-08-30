@@ -82,6 +82,11 @@ class Recording(unittest.TestCase):
             events,
         )
 
+    def test_false_positive_hint_carries_the_id_or_is_empty(self) -> None:
+        self.assertIn("--false-positive abcd1234", telemetry.false_positive_hint("abcd1234"))
+        self.assertEqual(telemetry.false_positive_hint(None), "")
+        self.assertEqual(telemetry.false_positive_hint(""), "")
+
     def test_a_fifo_at_omp_config_does_not_hang_record(self) -> None:
         """record() reads omp.json on every call (the telemetry on/off flag) via omp.config.load(),
         a path four of the six hosts never touched before telemetry existed. The same FIFO hang

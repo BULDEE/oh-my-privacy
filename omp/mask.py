@@ -9,6 +9,7 @@ name across a prompt, a file read and a command output.
 
 from __future__ import annotations
 
+import secrets
 import sys
 import time
 from pathlib import Path
@@ -36,6 +37,13 @@ def mask_file(path: Path) -> tuple[str, list[str]]:
     return mask(raw.decode("utf-8", errors="replace"))
 
 
+def emit_mask_notice(kinds: list[str], latency_ms: float) -> None:
+    event_id = secrets.token_hex(4)
+    notice = f"[OhMyPrivacy: {len(kinds)} secret(s) masked in this output; refer to them by their $OMP_* name]"
+    sys.stderr.write(notice + telemetry.false_positive_hint(event_id) + "\n")
+    telemetry.record("claude_code", "Bash", kinds, "mask", latency_ms, event_id=event_id)
+
+
 def main() -> int:
     if len(sys.argv) == 1:
         text = sys.stdin.read()
@@ -58,8 +66,7 @@ def main() -> int:
         sys.stderr.write(err_text)
     kinds = out_kinds + err_kinds
     if kinds:
-        sys.stderr.write(f"[OhMyPrivacy: {len(kinds)} secret(s) masked in this output; refer to them by their $OMP_* name]\n")
-        telemetry.record("claude_code", "Bash", kinds, "mask", latency_ms)
+        emit_mask_notice(kinds, latency_ms)
     return 0
 
 

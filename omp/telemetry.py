@@ -303,6 +303,17 @@ def format_report(store: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
+def false_positive_hint(event_id: str | None) -> str:
+    """The one line an intercepting host appends so a false positive is contestable in-flow.
+
+    Without it only prompt blocks carried an id, so the false-positive rate measured almost
+    nothing: every mask and scrub counted as a clean success no one could dispute.
+    """
+    if not event_id:
+        return ""
+    return f"\nFalse positive? python3 -m omp.telemetry --false-positive {event_id}"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="OhMyPrivacy local telemetry: report usage or mark a false positive.")
     group = parser.add_mutually_exclusive_group(required=True)
