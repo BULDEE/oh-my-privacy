@@ -213,6 +213,22 @@ run -- <binary> without an interpreter or an echo). [...]
 > doppler secrets --only-names --project p --config c   # passes: names only
 ```
 
+The guard splits the command on `&&`, `;`, `|` and newlines, then judges each segment on
+its own. Chaining is therefore fine; what is refused lives inside a single segment:
+
+```bash
+cd /srv && doppler run -- ./bin/gen --out $HOME/r.png   # passes: chained, ordinary $VAR
+doppler run -- ./bin/gen > /abs/r.png                   # refused: redirection
+doppler run -- python3 gen.py                           # refused: interpreter
+doppler run -- ./bin/send --key ${OMP_JWT_B5352DF5}     # refused: the value would leave
+```
+
+The guard matches text and never parses shell, so prose quoting a refused form is refused
+too. That is deliberate (ADR-0006): a rule a pair of quotes can talk around is not a rule.
+The body of a heredoc is the exception, since the shell never executes it: writing a script
+that merely mentions `credentials` or `.env` passes. A body piped into an interpreter
+(`<<EOF | bash`) is executed, and stays under judgement.
+
 ### A Hermes agent about to exfiltrate
 
 ```
@@ -253,7 +269,7 @@ password in prose. The threat model is the accident, not the adversary.
 | `Read` of a file with secrets | redirected to a masked copy (`updatedInput`) | Claude Code session |
 | Bash output (`cat`, `sort`, `python -c`, `env`...) | command wrapped, stdout/stderr masked before the model sees them | Claude Code session |
 | `Grep` in content mode | search re-run, denied with masked matches when needed | unit tests |
-| Vault reads (`doppler secrets get`, `age -d`) | refused, per command segment | probes |
+| Vault reads (`doppler secrets get`, `age -d`) | refused, per command segment | `tests/test_guard.py` |
 | MCP tools, WebFetch | `PostToolUse` re-detection: transcript and paste cache scrubbed, burnt-value warning | unit tests |
 | Local traces (`history.jsonl`, transcript, paste cache) | scrubbed by re-detection, never by passing values | disk grep after a live run |
 | Hermes tool calls | `pre_tool_call` veto | production Hermes (`hermes chat`) |

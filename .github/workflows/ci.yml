@@ -44,7 +44,7 @@ jobs:
       - name: ruff
         run: ruff check .
       - name: mypy
-        run: mypy omp hermes
+        run: mypy omp hermes hooks
       - name: shellcheck
         run: |
           sudo apt-get update && sudo apt-get install -y shellcheck
