@@ -56,13 +56,13 @@ FRAGMENT_PATTERNS: tuple[tuple[str, str], ...] = (
 # the next line of a terminal capture is not an assignment.
 CONTEXT_PATTERN = re.compile(
     r"(?i)[A-Za-z0-9_\-]*(?:api[_-]?key|secret(?:[_-]?key)?|token|"
-    r"auth(?:orization)?|bearer|credentials?)[ \t]*[:=][ \t]*[\"']?"
-    r"(?P<value>[A-Za-z0-9_\-./+=]{16,})"
+    r"auth(?:orization)?|bearer|credentials?)[\"']?[ \t]*[:=][ \t]*[\"']?"
+    r"(?P<value>[^\s\"']{16,})"
 )
 
 # A password is short and readable: only the context gives it away, so the threshold drops.
 PASSWORD_PATTERN = re.compile(
-    r"(?i)[A-Za-z0-9_\-]*(?:password|passwd|passphrase|pwd)[ \t]*[:=][ \t]*[\"']?"
+    r"(?i)[A-Za-z0-9_\-]*(?:password|passwd|passphrase|pwd)[\"']?[ \t]*[:=][ \t]*[\"']?"
     r"(?P<value>[^\s\"']{6,})"
 )
 
@@ -183,14 +183,11 @@ def _apply_entropy(cleaned: str, findings: dict[str, Finding]) -> str:
 
 
 def _apply_entropy_outside_urls(cleaned: str, findings: dict[str, Finding]) -> str:
-    parts: list[str] = []
-    cursor = 0
-    for match in URL_PATTERN.finditer(cleaned):
-        parts.append(_apply_entropy(cleaned[cursor:match.start()], findings))
-        parts.append(match.group(0))
-        cursor = match.end()
-    parts.append(_apply_entropy(cleaned[cursor:], findings))
-    return "".join(parts)
+    # A1: a secret carried inside a URL (a Slack/Discord webhook, a presigned S3 link) is still a
+    # secret. Scheme and host are structured and never read as a token, and is_structured_identifier
+    # already spares an ordinary URL path, so scanning the whole string closes the carve-out that let
+    # a token ride out inside a link, without flagging normal URLs.
+    return _apply_entropy(cleaned, findings)
 
 
 def detect(text: str) -> tuple[str, list[Finding]]:

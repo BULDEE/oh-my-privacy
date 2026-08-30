@@ -104,15 +104,16 @@ class EntropyPatterns(unittest.TestCase):
             _, findings = detect(text)
             self.assertEqual(findings, [], text)
 
-    def test_opaque_token_inside_a_url_passes(self) -> None:
-        """What a URL carries is the responsibility of whoever handed it out, not of the user pasting it."""
+    def test_opaque_token_inside_a_url_is_detected(self) -> None:
+        """A1 (2026-08-30): a secret carried by a URL is still a secret. A Slack/Discord webhook or a
+        presigned link is exactly the accident to catch, so the old URL carve-out was removed."""
         for text in (
             f"https://example.test/download/{FAKE_OPAQUE}",
             f"www.example.test/d/{FAKE_OPAQUE}",
             f"example.test/d/{FAKE_OPAQUE}",
         ):
             _, findings = detect(text)
-            self.assertEqual(findings, [], text)
+            self.assertTrue(findings, text)
 
     def test_entropy_outside_the_url_is_still_detected(self) -> None:
         _, findings = detect(f"https://example.test/docs then paste {FAKE_OPAQUE}")
