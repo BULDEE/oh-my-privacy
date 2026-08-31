@@ -25,5 +25,6 @@
 {"complexity":1,"fan_out":9,"file_lines":128,"ignores":0,"max_fn_lines":23,"path":"tests/audit_security.py"},
 {"complexity":3,"fan_out":9,"file_lines":256,"ignores":0,"max_fn_lines":21,"path":"tests/test_coverage_hooks.py"},
 {"complexity":2,"fan_out":5,"file_lines":206,"ignores":0,"max_fn_lines":11,"path":"tests/test_detect.py"},
-{"complexity":2,"fan_out":5,"file_lines":153,"ignores":0,"max_fn_lines":11,"path":"tests/test_guard.py"}
+{"complexity":2,"fan_out":5,"file_lines":153,"ignores":0,"max_fn_lines":11,"path":"tests/test_guard.py"},
+{"complexity":2,"fan_out":17,"file_lines":498,"ignores":0,"max_fn_lines":20,"path":"tests/test_telemetry.py"}
 ]
