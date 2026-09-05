@@ -7,8 +7,9 @@ its placeholder before the next stage runs, so nothing is counted twice.
 2. Assignment context (`api_key = ...`, `password: ...`): the name betrays the value.
 3. Entropy: a long, mixed, dense string is a token, never prose. Pure hexadecimal (git SHA,
    docker digest, UUID) cannot reach the threshold, so it passes: a commit SHA in a prompt
-   is a legitimate and frequent use. This stage never reads inside a URL: what a link carries
-   belongs to whoever handed the link out, the threat model here is what the user leaks himself.
+   is a legitimate and frequent use. Inside a URL this stage reads the query string and the
+   fragment, plus any path whose shape announces a credential; an ordinary path segment is a
+   resource identifier and passes.
 """
 
 from __future__ import annotations
@@ -82,7 +83,17 @@ URL_PATTERN = re.compile(
     | \b[a-z0-9\-]+(?:\.[a-z0-9\-]+)+/[^\s"'<>`]+
     """
 )
+# A URL path that names what it carries: a webhook endpoint, an OAuth or callback route, a
+# signed-link route. Everywhere else in a path, a long opaque block is a resource identifier.
+URL_CREDENTIAL_MARKER = re.compile(
+    r"(?i)/(?:hooks?|webhooks?|services|callbacks?|oauth|auth|tokens?|secrets?|keys?|"
+    r"credentials?|signed|presigned|invites?)(?:/|$)"
+)
 GENERIC_TOKEN = re.compile(r"[A-Za-z0-9_\-+/=]{32,}")
+# Inside a URL, `/ ? # & =` are structure, never token content: a match that straddles them is
+# cut back to the block that actually carries the entropy, so the placeholder replaces the
+# secret and not the host tail or the path around it.
+URL_SEPARATORS = re.compile(r"[/?#&=]")
 LONG_HEX = re.compile(r"\b[0-9a-fA-F]{48,}\b")
 DIGEST_PREFIX = re.compile(r"(?i)(?:sha\d*[:\-]|integrity\s+|md5[:\-])$")
 # A path, a slug, a composite id: several short segments glued by separators. An opaque token
@@ -171,23 +182,67 @@ def _apply_context(cleaned: str, findings: dict[str, Finding], pattern: re.Patte
     return cleaned
 
 
+def _url_spans(text: str) -> list[tuple[int, int, str]]:
+    return [(match.start(), match.end(), match.group(0)) for match in URL_PATTERN.finditer(text)]
+
+
+def _is_shielded_url_path(spans: list[tuple[int, int, str]], position: int) -> bool:
+    """A1 revised: an entropic block in a URL is read only where a credential can live.
+
+    A webhook, a presigned link and an OAuth redirect all announce themselves: the value sits in
+    the query string or the fragment, or the path names what it carries (`/services/`, `/hooks/`,
+    `/oauth/`). An ordinary path segment is a resource identifier, and a document id from Google
+    Docs, Notion or Dropbox has exactly the shape of an opaque token, so reading it there costs a
+    blocked message on every shared link. The trade-off is stated in ADR-0011.
+    """
+    for start, end, url in spans:
+        if not start <= position < end:
+            continue
+        boundaries = [index for index in (url.find("?"), url.find("#")) if index != -1]
+        path_end = min(boundaries) if boundaries else len(url)
+        if position - start >= path_end:
+            return False
+        return URL_CREDENTIAL_MARKER.search(url[:path_end]) is None
+    return False
+
+
+def _split_in_url(spans: list[tuple[int, int, str]], match: re.Match[str]) -> list[tuple[int, str]]:
+    """Outside a URL the match stands whole; inside one it is cut on the URL's own separators.
+
+    Cutting is confined to URLs because `/` and `=` are legitimate base64 content: a key whose
+    encoding carries a slash must keep matching as one block anywhere else, or half of it drops
+    under the 32-character floor and escapes.
+    """
+    candidate = match.group(0)
+    if not any(start <= match.start() < end for start, end, _ in spans):
+        return [(match.start(), candidate)]
+    parts: list[tuple[int, str]] = []
+    offset = 0
+    for piece in URL_SEPARATORS.split(candidate):
+        if len(piece) >= 32:
+            parts.append((match.start() + offset, piece))
+        offset += len(piece) + 1
+    return parts
+
+
 def _apply_entropy(cleaned: str, findings: dict[str, Finding]) -> str:
-    for match in sorted(LONG_HEX.finditer(cleaned), key=lambda found: -len(found.group(0))):
-        if not _preceded_by_digest_marker(cleaned, match.start()):
-            cleaned = cleaned.replace(match.group(0), _record(findings, "hex", match.group(0)))
-    for match in sorted(GENERIC_TOKEN.finditer(cleaned), key=lambda found: -len(found.group(0))):
-        candidate = match.group(0)
-        if looks_like_token(candidate) and not _preceded_by_digest_marker(cleaned, match.start()):
-            cleaned = cleaned.replace(candidate, _record(findings, "token", candidate))
+    # Decisions are read on the stage input, never on the text already being rewritten: a
+    # replacement shifts every following offset, and both the digest marker and the URL span are
+    # positional.
+    source = cleaned
+    spans = _url_spans(source)
+    stages: tuple[tuple[re.Pattern[str], str], ...] = ((LONG_HEX, "hex"), (GENERIC_TOKEN, "token"))
+    for pattern, kind in stages:
+        matches = sorted(pattern.finditer(source), key=lambda found: -len(found.group(0)))
+        for start, candidate in [part for match in matches for part in _split_in_url(spans, match)]:
+            if kind == "token" and not looks_like_token(candidate):
+                continue
+            if _preceded_by_digest_marker(source, start):
+                continue
+            if _is_shielded_url_path(spans, start):
+                continue
+            cleaned = cleaned.replace(candidate, _record(findings, kind, candidate))
     return cleaned
-
-
-def _apply_entropy_outside_urls(cleaned: str, findings: dict[str, Finding]) -> str:
-    # A1: a secret carried inside a URL (a Slack/Discord webhook, a presigned S3 link) is still a
-    # secret. Scheme and host are structured and never read as a token, and is_structured_identifier
-    # already spares an ordinary URL path, so scanning the whole string closes the carve-out that let
-    # a token ride out inside a link, without flagging normal URLs.
-    return _apply_entropy(cleaned, findings)
 
 
 def detect(text: str) -> tuple[str, list[Finding]]:
@@ -199,5 +254,5 @@ def detect(text: str) -> tuple[str, list[Finding]]:
     cleaned = _apply_context(cleaned, findings, PASSWORD_PATTERN, "password")
     for pattern in INLINE_CREDENTIAL_PATTERNS:
         cleaned = _apply_context(cleaned, findings, re.compile(pattern), "password")
-    cleaned = _apply_entropy_outside_urls(cleaned, findings)
+    cleaned = _apply_entropy(cleaned, findings)
     return cleaned, list(findings.values())

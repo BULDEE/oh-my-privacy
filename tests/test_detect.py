@@ -104,16 +104,43 @@ class EntropyPatterns(unittest.TestCase):
             _, findings = detect(text)
             self.assertEqual(findings, [], text)
 
-    def test_opaque_token_inside_a_url_is_detected(self) -> None:
-        """A1 (2026-08-30): a secret carried by a URL is still a secret. A Slack/Discord webhook or a
-        presigned link is exactly the accident to catch, so the old URL carve-out was removed."""
+    def test_credential_shaped_url_is_still_inspected(self) -> None:
+        """A1 revised (ADR-0011): a URL is read where a credential can live, which is the query
+        string, the fragment, and a path that names what it carries."""
         for text in (
-            f"https://example.test/download/{FAKE_OPAQUE}",
-            f"www.example.test/d/{FAKE_OPAQUE}",
-            f"example.test/d/{FAKE_OPAQUE}",
+            f"https://hooks.slack.test/services/T00/B00/{FAKE_OPAQUE}",
+            f"https://discord.test/api/webhooks/1234567890/{FAKE_OPAQUE}",
+            f"https://bucket.s3.test/report.pdf?X-Amz-Signature={FAKE_OPAQUE}",
+            f"https://app.test/callback#access_token={FAKE_OPAQUE}",
         ):
             _, findings = detect(text)
             self.assertTrue(findings, text)
+
+    def test_document_id_in_a_url_path_passes(self) -> None:
+        """ADR-0011: a shared document link is the highest-frequency false positive of the entropy
+        stage, and an ordinary path segment carries a resource id, not a credential."""
+        for text in (
+            "https://docs.google.com/document/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit",
+            "https://www.notion.so/team/Page-a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0u1V2",
+            f"https://example.test/download/{FAKE_OPAQUE}",
+        ):
+            _, findings = detect(text)
+            self.assertEqual(findings, [], text)
+
+    def test_url_structure_survives_the_mask(self) -> None:
+        """The placeholder replaces the secret alone: `/` and `=` are URL structure, so a match that
+        straddles them is cut back before it swallows the host tail or the path."""
+        cleaned, findings = detect(f"https://hooks.slack.test/services/T00/B00/{FAKE_OPAQUE}")
+        self.assertEqual([finding.value for finding in findings], [FAKE_OPAQUE])
+        self.assertTrue(cleaned.startswith("https://hooks.slack.test/services/T00/B00/"), cleaned)
+
+    def test_base64_secret_with_a_slash_stays_one_block(self) -> None:
+        """Outside a URL, `/` is base64 content: cutting there would drop each half under the
+        32-character floor and let half of all encoded 32-byte keys through."""
+        secret = "aB3/dE5+fG7hI9jK1lM3nO5pQ7rS9tU1vW3xY5zA7b="
+        cleaned, findings = detect(f"key {secret}")
+        self.assertEqual([finding.value for finding in findings], [secret])
+        self.assertNotIn(secret, cleaned)
 
     def test_entropy_outside_the_url_is_still_detected(self) -> None:
         _, findings = detect(f"https://example.test/docs then paste {FAKE_OPAQUE}")

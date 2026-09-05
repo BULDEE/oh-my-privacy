@@ -78,7 +78,9 @@ counted twice and later stages never see earlier matches.
 5. **Long hex**: 48+ hexadecimal characters not preceded by `sha256:`, `sha512-`,
    `integrity`, `md5:`.
 6. **Entropy**: 32+ characters, mixed case plus digits, Shannon entropy at or above 4.5
-   bits per character, same digest-marker exclusion.
+   bits per character, same digest-marker exclusion. Inside a URL this stage reads the query
+   string, the fragment, and a path that names a credential; any other path segment is a
+   resource identifier and passes (ADR-0011).
 
 Placeholder names are `OMP_<KIND>_<8 hex of sha256(value)>`: stable, collision-resistant,
 and safe to show anywhere.
